@@ -428,13 +428,8 @@ export class OllamaClient {
 
         try {
             const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-            const isOllamaCloud = this._isOllamaCloud(url);
             if (apiKey && !isGemini) {
-                if (isOllamaCloud) {
-                    headers['Cookie'] = apiKey.startsWith('__session=') ? apiKey : `__session=${apiKey}`;
-                } else {
-                    headers['Authorization'] = `Bearer ${apiKey}`;
-                }
+                headers['Authorization'] = `Bearer ${apiKey}`;
             }
             if (url.includes('openrouter')) {
                 headers['HTTP-Referer'] = 'https://github.com/microsoft/vscode';
@@ -677,7 +672,10 @@ Règles :
     }
 
     private _isOpenAI(url: string): boolean {
-        return url.includes('together') || url.includes('openrouter') || url.endsWith('/v1');
+        const u = url.toLowerCase();
+        return u.includes('together') || u.includes('openrouter') || u.includes('openai.com')
+            || u.includes('groq.com') || u.includes('mistral.ai') || u.includes('api.ollama.com')
+            || u.includes('ollama.ai/api') || u.endsWith('/v1') || u.includes('/v1/');
     }
 
     _detectProvider(url: string): string {
@@ -685,25 +683,13 @@ Règles :
         if (!u || u.includes('localhost') || u.includes('127.0.0.1')) return 'local';
         if (u.includes('generativelanguage.googleapis.com')) return 'gemini';
         if (u.includes('openai.com')) return 'openai';
-        if (u.includes('openrouter')) return 'openrouter';
-        if (u.includes('together')) return 'together';
-        if (u.includes('mistral')) return 'mistral';
-        if (u.includes('groq')) return 'groq';
-        if (u.includes('anthropic') || u.includes('claude')) return 'anthropic';
-        if (u.includes('ollama.com') || u.includes('ollama.ai')) return 'ollama-cloud';
+        if (u.includes('openrouter.ai')) return 'openrouter';
+        if (u.includes('together.xyz') || u.includes('together.ai')) return 'together';
+        if (u.includes('mistral.ai')) return 'mistral';
+        if (u.includes('groq.com')) return 'groq';
+        if (u.includes('anthropic.com') || u.includes('claude.ai')) return 'anthropic';
+        if (u.includes('api.ollama.com') || u.includes('ollama.ai')) return 'ollama-cloud';
         return 'ollama-cloud';
-    }
-
-    private _isOllamaCloud(url: string): boolean {
-        const u = url.toLowerCase();
-        return u.includes('ollama.com') || u.includes('ollama.ai');
-    }
-
-    private _getOllamaCloudCookie(url: string): string {
-        const keys = this.getApiKeys();
-        const entry = keys.find(k => k.url && url.startsWith(k.url.replace(/\/+$/, '')));
-        if (entry?.key) return entry.key;
-        return this._getConfig().get<string>('apiKey') || '';
     }
 
     private _isGemini(url: string): boolean {

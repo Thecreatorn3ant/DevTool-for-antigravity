@@ -1,5 +1,12 @@
 # 🌌 Antigravity : Local AI Integration
 
+> ⚠️ **ATTENTION : UTILISATEURS DE VS CODE STANDARD**  
+> Ce dépôt est exclusivement réservé à l'intégration au sein de l'IDE Antigravity de Google.
+> L'installation de cette version sur un VS Code classique peut provoquer des instabilités.
+
+👉 Pour télécharger la version stable pour VS Code :
+[DevTool for vscode](https://github.com/Thecreatorn3ant/DevTool/releases/tag/v0.0.2)
+
 **Antigravity** est une extension VS Code puissante conçue pour intégrer l'intelligence artificielle locale (via **Ollama**) ou distante directement dans votre flux de travail. Développez plus vite avec un contexte intelligent, des correctifs automatiques et une interface immersive.
 
 ---
