@@ -1,5 +1,5 @@
 {
-  "name": "local-ai-integration",
+  "name": "local-ai-for-antigravity-ide",
   "displayName": "Local AI Integration",
   "description": "Integrate local AI models (Ollama) into VS Code with project context.",
   "version": "0.0.2",
