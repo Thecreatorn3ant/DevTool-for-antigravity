@@ -176,20 +176,32 @@ export async function localStream(
 
 export async function listLocalModels(baseUrl: string = 'http://localhost:11434', apiKey?: string): Promise<string[]> {
     try {
+        const url = baseUrl.includes('://') ? baseUrl : `https://${baseUrl}`;
         const headers: Record<string, string> = {};
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-        const res = await fetch(`${baseUrl}/api/tags`, { headers, signal: AbortSignal.timeout(2000) });
-        if (!res.ok) return [];
+        const finalUrl = `${url.replace(/\/+$/, '')}/api/tags`;
+        console.log(`[Ollama] ListModels: ${finalUrl} (auth: ${!!apiKey})`);
+        const res = await fetch(finalUrl, { headers, signal: AbortSignal.timeout(5000) });
+        if (!res.ok) {
+            console.error(`[Ollama] ListModels Failed: ${res.status} ${res.statusText}`);
+            return [];
+        }
         const data: any = await res.json();
-        return (data?.models || []).map((m: any) => m.name as string).filter(Boolean);
-    } catch { return []; }
+        const models = (data?.models || []).map((m: any) => m.name as string).filter(Boolean);
+        console.log(`[Ollama] ListModels Success: found ${models.length} models`);
+        return models;
+    } catch (e: any) {
+        console.error(`[Ollama] ListModels Error: ${e.message}`);
+        return [];
+    }
 }
 
 export async function checkLocalConnection(baseUrl: string = 'http://localhost:11434', apiKey?: string): Promise<boolean> {
     try {
+        const url = baseUrl.includes('://') ? baseUrl : `https://${baseUrl}`;
         const headers: Record<string, string> = {};
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-        const res = await fetch(`${baseUrl}/api/tags`, { headers, signal: AbortSignal.timeout(2000) });
+        const res = await fetch(`${url.replace(/\/+$/, '')}/api/tags`, { headers, signal: AbortSignal.timeout(5000) });
         return res.ok;
     } catch { return false; }
 }
