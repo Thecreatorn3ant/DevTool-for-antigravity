@@ -1,0 +1,141 @@
+{
+  "name": "local-ai-integration",
+  "displayName": "Local AI Integration",
+  "description": "Integrate local AI models (Ollama) into VS Code with project context.",
+  "version": "0.0.2",
+  "publisher": "antigravity",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "local-ai.openChat",
+        "title": "Local AI: Open Chat",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.generateCommitMessage",
+        "title": "✨ Générer un message de commit (IA)",
+        "category": "Local AI",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "local-ai.lspDiagnostics",
+        "title": "Antigravity: Analyser les erreurs LSP",
+        "icon": "$(error)"
+      },
+      {
+        "command": "local-ai.runAgent",
+        "title": "Antigravity: Lancer l'agent autonome",
+        "icon": "$(robot)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "local-ai-sidebar",
+          "title": "Local AI",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "local-ai-sidebar": [
+        {
+          "type": "webview",
+          "id": "local-ai.chatView",
+          "name": "Chat",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Local AI",
+      "properties": {
+        "local-ai.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "The URL of your local Ollama server."
+        },
+        "local-ai.defaultModel": {
+          "type": "string",
+          "default": "llama3",
+          "description": "The default model to use for completion and chat."
+        },
+        "local-ai.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Optional API Key (Bearer Token) for authenticating to cloud models (e.g. Ollama Cloud, OpenRouter, Together AI)."
+        },
+        "local-ai.apiKeys": {
+          "type": "array",
+          "default": [],
+          "description": "List of API Keys for multi-account support and automatic switching on rate limits.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "rateLimitedUntil": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    },
+    "menus": {
+      "scm/title": [
+        {
+          "command": "local-ai.generateCommitMessage",
+          "when": "scmProvider == git",
+          "group": "navigation"
+        },
+        {
+          "command": "local-ai.lspDiagnostics",
+          "when": "scmProvider == git",
+          "group": "navigation"
+        },
+        {
+          "command": "local-ai.runAgent",
+          "when": "scmProvider == git",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.80.0",
+    "@types/mocha": "10.0.10",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "6.21.0",
+    "@typescript-eslint/parser": "6.21.0",
+    "eslint": "8.57.1",
+    "glob": "13.0.6",
+    "mocha": "10.8.2",
+    "typescript": "5.x",
+    "@vscode/test-electron": "2.5.2"
+  }
+}

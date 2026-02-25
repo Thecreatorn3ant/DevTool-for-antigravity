@@ -1,0 +1,55 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "baseBranches": [
+    "dev"
+  ],
+  "packageRules": [
+    {
+      "description": "Empêcher la mise à jour de l'API VS Code pour rester compatible 1.80",
+      "matchPackageNames": [
+        "@types/vscode",
+        "@vscode/test-electron"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Regrouper toutes les mises à jour de types dans une seule PR",
+      "matchPackagePatterns": [
+        "^@types/"
+      ],
+      "excludePackageNames": [
+        "@types/vscode"
+      ],
+      "groupName": "TypeScript Types"
+    },
+    {
+      "description": "Empêcher la mise à jour de Node.js",
+      "matchPackageNames": [
+        "@types/node"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Regrouper les mises à jour ESLint",
+      "matchPackagePatterns": [
+        "eslint"
+      ],
+      "groupName": "Linting Tools"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "addLabels": [
+      "security"
+    ]
+  },
+  "labels": [
+    "dependencies",
+    "renovate"
+  ],
+  "rangeStrategy": "pin",
+  "timezone": "Europe/Paris"
+}
