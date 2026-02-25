@@ -71,7 +71,7 @@ function applySearchReplace(
         patches.push({ search: searchLines.join('\n'), replace: replaceLines.join('\n') });
     }
 
-    if (patches.length === 0) return { result: documentText, patchCount: 0, errors: [] };
+    if (patches.length === 0) return { result: docNorm, patchCount: 0, errors: [] };
 
     let workingText = docNorm;
 
@@ -1164,14 +1164,15 @@ ${msg}
 
         if (hasMarkers) {
             const res = applySearchReplace(oldText, code);
+            const cleanResult = res.result.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
             const eol = doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
-            previewText = res.result.split('\n').join(eol);
+            previewText = cleanResult.split('\n').join(eol);
             patchCount = res.patchCount;
             res.errors.forEach(e => vscode.window.showWarningMessage(e));
         }
 
         const previewUri = vscode.Uri.parse(
-            `${AiPreviewProvider.scheme}://patch/${encodeURIComponent(path.basename(uri.fsPath))}`
+            `${AiPreviewProvider.scheme}://patch/${encodeURIComponent(uri.fsPath.replace(/\\/g, '/'))}`
         );
         ChatViewProvider._previewProvider.set(previewUri, previewText);
 
