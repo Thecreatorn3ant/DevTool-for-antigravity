@@ -1126,7 +1126,7 @@ ${msg}
     private async _handleApplyEdit(code: string, targetFile?: string) {
         let uri: vscode.Uri | undefined;
         if (targetFile) {
-            const clean = targetFile.replace(/\[FILE:|\]/g, '').trim();
+            const clean = targetFile.replace(/\[FILE:|\]/g, '').trim().split(/[\s(]/)[0];
             const files = await vscode.workspace.findFiles(`**/${clean}`, '**/node_modules/**', 1);
             if (files[0]) { uri = files[0]; }
         }
@@ -1138,7 +1138,7 @@ ${msg}
 
         const doc = await vscode.workspace.openTextDocument(uri);
         const oldText = doc.getText();
-        const hasMarkers = /SEARCH/.test(code);
+        const hasMarkers = /SEARCH/i.test(code);
         let previewText = code;
         let patchCount = 0;
 
@@ -1156,6 +1156,15 @@ ${msg}
 
         const diffTitle = `Review: ${path.basename(uri.fsPath)} (${patchCount > 0 ? `${patchCount} modification(s)` : 'Proposition'})`;
         await vscode.commands.executeCommand('vscode.diff', uri, previewUri, diffTitle);
+
+        if (hasMarkers && patchCount === 0) {
+            const retry = await vscode.window.showErrorMessage(
+                `Le bloc SEARCH/REPLACE n'a pas pu être appliqué à "${path.basename(uri.fsPath)}".`,
+                'Fermer'
+            );
+            ChatViewProvider._previewProvider.delete(previewUri);
+            return;
+        }
 
         const result = await vscode.window.showInformationMessage(
             patchCount > 0
@@ -1823,7 +1832,7 @@ ${msg}
             "    text = text.replace(/\\[NEED_FILE:[^\\]]+\\]/g, '');",
             "    text = text.replace(/\\[WILL_MODIFY:[^\\]]+\\]/g, '');",
             "    // Code blocks with [FILE: name] support",
-            "    text = text.replace(/\\[FILE:\\s*([^\\]]+)\\]\\s*```(\\w+)?\\n([\\s\\S]*?)```/g, function(_, fname, lang, code) {",
+            "    text = text.replace(/\\[FILE:\\s*([^ \\]\\n]+)(?: [^\\]\\n]+)?\\]\\s*```(\\w+)?\\n([\\s\\S]*?)```/g, function(_, fname, lang, code) {",
             "        var idx = _registerCode(code);",
             "        var fidx = _registerCode(fname);",
             "        return '<div class=\"code-block patch\"><div class=\"code-header\"><span>📄 '+escapeHtml(fname)+'</span><button onclick=\"applyFilePatch('+idx+','+fidx+')\">✅ Appliquer</button></div><div class=\"code-content\">'+escapeHtml(code)+'</div></div>';",
@@ -1831,7 +1840,7 @@ ${msg}
             "    // Regular code blocks",
             "    text = text.replace(/```(\\w+)?\\n([\\s\\S]*?)```/g, function(_, lang, code) {",
             "        var idx = _registerCode(code);",
-            "        var isPatch = /SEARCH/.test(code);",
+            "        var isPatch = /SEARCH/i.test(code);",
             "        var cls = isPatch ? 'patch' : '';",
             "        var btns = '<button onclick=\"applyCode('+idx+')\">✅ Appliquer</button>';",
             "        if (isPatch) btns += ' <button onclick=\"copyCode('+idx+')\">📋 Copier</button>';",
