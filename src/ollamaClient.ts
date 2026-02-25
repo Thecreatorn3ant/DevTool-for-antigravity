@@ -291,9 +291,9 @@ nouveau_code
         try {
             let result: string;
 
-            if (isLocalUrl(url)) {
+            if (isLocalUrl(url) || this._detectProvider(url) === 'ollama-cloud') {
                 result = await localStream(
-                    { model, prompt: fullPrompt, systemPrompt, images, signal, baseUrl: url },
+                    { model, prompt: fullPrompt, systemPrompt, images, signal, baseUrl: url, apiKey },
                     onUpdate
                 );
 
@@ -352,7 +352,11 @@ nouveau_code
 
     async listModels(): Promise<string[]> {
         const url = this._getBaseUrl();
-        if (isLocalUrl(url)) return listLocalModels(url);
+        const provider = this._detectProvider(url);
+        if (isLocalUrl(url) || provider === 'ollama-cloud') {
+            const { key } = this._getAvailableKey(url);
+            return listLocalModels(url, key);
+        }
         const { key } = this._getAvailableKey(url);
         return listOpenAICompatModels(url, key);
     }
@@ -383,6 +387,7 @@ nouveau_code
             let list: string[] = [];
             try {
                 if (provider === 'gemini' && entry.key) list = await listGeminiModels(entry.key);
+                else if (provider === 'ollama-cloud') list = await listLocalModels(baseUrl, entry.key);
                 else list = await listOpenAICompatModels(baseUrl, entry.key);
             } catch { }
             for (const m of list) {
@@ -396,8 +401,10 @@ nouveau_code
 
     async checkConnection(): Promise<boolean> {
         const url = this._getBaseUrl();
-        if (isLocalUrl(url)) return checkLocalConnection(url);
-        try { const { key } = this._getAvailableKey(url); await listOpenAICompatModels(url, key); return true; }
+        const provider = this._detectProvider(url);
+        const { key } = this._getAvailableKey(url);
+        if (isLocalUrl(url) || provider === 'ollama-cloud') return checkLocalConnection(url, key);
+        try { await listOpenAICompatModels(url, key); return true; }
         catch { return false; }
     }
 

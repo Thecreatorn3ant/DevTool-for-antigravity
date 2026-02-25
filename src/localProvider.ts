@@ -12,42 +12,42 @@ export function isLocalUrl(url: string): boolean {
 }
 
 const LOCAL_CTX: Record<string, number> = {
-    'llama3.3':          131072,
-    'llama3.2':          131072,
-    'llama3.1':          131072,
-    'llama3':              8192,
-    'ministral':         131072,
-    'mistral-small':      32768,
-    'mistral-nemo':      131072,
-    'mistral':            32768,
-    'mixtral':            45000,
-    'deepseek-r1':       131072,
-    'deepseek-v3':       131072,
+    'llama3.3': 131072,
+    'llama3.2': 131072,
+    'llama3.1': 131072,
+    'llama3': 8192,
+    'ministral': 131072,
+    'mistral-small': 32768,
+    'mistral-nemo': 131072,
+    'mistral': 32768,
+    'mixtral': 45000,
+    'deepseek-r1': 131072,
+    'deepseek-v3': 131072,
     'deepseek-coder-v2': 131072,
-    'deepseek-coder':     16384,
-    'qwen2.5-coder':     131072,
-    'qwen2.5':           131072,
-    'qwen2':              32768,
-    'qwen':                8192,
-    'codellama':          16384,
-    'phi4':               16384,
-    'phi3.5':             16384,
-    'phi3':                4096,
-    'phi':                 2048,
-    'gemma3':            131072,
-    'gemma2':              8192,
-    'gemma':               8192,
-    'llava-llama3':      131072,
-    'llava-phi3':          4096,
-    'llava':               4096,
-    'bakllava':            4096,
-    'moondream':           2048,
-    'command-r':         131072,
-    'granite3':          131072,
-    'starcoder2':         16384,
-    'starcoder':           8192,
-    'openchat':            8192,
-    'vicuna':              4096,
+    'deepseek-coder': 16384,
+    'qwen2.5-coder': 131072,
+    'qwen2.5': 131072,
+    'qwen2': 32768,
+    'qwen': 8192,
+    'codellama': 16384,
+    'phi4': 16384,
+    'phi3.5': 16384,
+    'phi3': 4096,
+    'phi': 2048,
+    'gemma3': 131072,
+    'gemma2': 8192,
+    'gemma': 8192,
+    'llava-llama3': 131072,
+    'llava-phi3': 4096,
+    'llava': 4096,
+    'bakllava': 4096,
+    'moondream': 2048,
+    'command-r': 131072,
+    'granite3': 131072,
+    'starcoder2': 16384,
+    'starcoder': 8192,
+    'openchat': 8192,
+    'vicuna': 4096,
 };
 
 const _ctxCache = new Map<string, number>();
@@ -99,6 +99,7 @@ export interface LocalRequestOptions {
     images?: AttachedImage[];
     signal?: AbortSignal;
     baseUrl?: string;
+    apiKey?: string;
 }
 
 export async function localStream(
@@ -118,9 +119,12 @@ export async function localStream(
         reqBody.images = opts.images.map(i => i.base64);
     }
 
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (opts.apiKey) headers['Authorization'] = `Bearer ${opts.apiKey}`;
+
     const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(reqBody),
         signal: opts.signal,
     });
@@ -170,18 +174,22 @@ export async function localStream(
     return fullResponse;
 }
 
-export async function listLocalModels(baseUrl: string = 'http://localhost:11434'): Promise<string[]> {
+export async function listLocalModels(baseUrl: string = 'http://localhost:11434', apiKey?: string): Promise<string[]> {
     try {
-        const res = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(2000) });
+        const headers: Record<string, string> = {};
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        const res = await fetch(`${baseUrl}/api/tags`, { headers, signal: AbortSignal.timeout(2000) });
         if (!res.ok) return [];
         const data: any = await res.json();
         return (data?.models || []).map((m: any) => m.name as string).filter(Boolean);
     } catch { return []; }
 }
 
-export async function checkLocalConnection(baseUrl: string = 'http://localhost:11434'): Promise<boolean> {
+export async function checkLocalConnection(baseUrl: string = 'http://localhost:11434', apiKey?: string): Promise<boolean> {
     try {
-        const res = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(2000) });
+        const headers: Record<string, string> = {};
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        const res = await fetch(`${baseUrl}/api/tags`, { headers, signal: AbortSignal.timeout(2000) });
         return res.ok;
     } catch { return false; }
 }
