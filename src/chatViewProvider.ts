@@ -51,7 +51,7 @@ function applySearchReplace(
     let replaceLines: string[] = [];
 
     const isSearchMarker = (l: string) => /^\s*<{2,}\s*SEARCH/i.test(l);
-    const isSeparator = (l: string) => /^\s*={4,}\s*$/.test(l);
+    const isSeparator = (l: string) => /^\s*={4,}/i.test(l);
     const isCloseMarker = (l: string) => /^\s*>{2,}/.test(l);
 
     for (const line of lines) {
@@ -117,9 +117,7 @@ function applySearchReplace(
         if (!fuzzyMatched) errors.push(`Bloc SEARCH introuvable : "${search.substring(0, 60)}..."`);
     }
 
-    let result = workingText;
-    if (isCrLf) result = result.replace(/\n/g, '\r\n');
-    return { result, patchCount, errors };
+    return { result: workingText, patchCount, errors };
 }
 
 function parseAiResponse(response: string): {
@@ -1125,14 +1123,36 @@ ${msg}
 
     private async _handleApplyEdit(code: string, targetFile?: string) {
         let uri: vscode.Uri | undefined;
+
+        if (!targetFile) {
+            const fileMatch = /\[FILE:\s*([^\]\n]+)\]/.exec(code);
+            if (fileMatch) {
+                targetFile = fileMatch[1].trim().split(/[\s(]/)[0];
+            }
+        }
+
         if (targetFile) {
             const clean = targetFile.replace(/\[FILE:|\]/g, '').trim().split(/[\s(]/)[0];
-            const files = await vscode.workspace.findFiles(`**/${clean}`, '**/node_modules/**', 1);
-            if (files[0]) { uri = files[0]; }
+            const files = await vscode.workspace.findFiles(`**/${clean}`, '**/node_modules/**', 5);
+            if (files.length > 0) {
+                uri = files.find(f => f.fsPath.replace(/\\/g, '/').toLowerCase().endsWith(clean.replace(/\\/g, '/').toLowerCase())) || files[0];
+            }
+
+            if (!uri) {
+                const openDoc = vscode.workspace.textDocuments.find(d =>
+                    d.uri.fsPath.replace(/\\/g, '/').toLowerCase().endsWith(clean.replace(/\\/g, '/').toLowerCase())
+                );
+                if (openDoc) uri = openDoc.uri;
+            }
         }
-        if (!uri) { uri = vscode.window.activeTextEditor?.document.uri; }
+
+        if (!uri && !targetFile) {
+            uri = vscode.window.activeTextEditor?.document.uri;
+        }
+
         if (!uri) {
-            vscode.window.showWarningMessage('Aucun fichier actif pour appliquer le patch.');
+            const msg = targetFile ? `Fichier "${targetFile}" introuvable ou non ouvert.` : 'Aucun fichier actif pour appliquer le patch.';
+            vscode.window.showWarningMessage(msg);
             return;
         }
 
@@ -1144,7 +1164,8 @@ ${msg}
 
         if (hasMarkers) {
             const res = applySearchReplace(oldText, code);
-            previewText = res.result;
+            const eol = doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+            previewText = res.result.split('\n').join(eol);
             patchCount = res.patchCount;
             res.errors.forEach(e => vscode.window.showWarningMessage(e));
         }
