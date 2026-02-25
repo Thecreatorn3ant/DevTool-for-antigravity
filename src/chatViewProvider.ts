@@ -51,7 +51,7 @@ function applySearchReplace(
     let replaceLines: string[] = [];
 
     const isSearchMarker = (l: string) => /^\s*<{2,}\s*SEARCH/i.test(l);
-    const isSeparator = (l: string) => /^\s*={4,}\s*$/.test(l);
+    const isSeparator = (l: string) => /^\s*={4,}/i.test(l);
     const isCloseMarker = (l: string) => /^\s*>{2,}/.test(l);
 
     for (const line of lines) {
@@ -71,7 +71,7 @@ function applySearchReplace(
         patches.push({ search: searchLines.join('\n'), replace: replaceLines.join('\n') });
     }
 
-    if (patches.length === 0) return { result: documentText, patchCount: 0, errors: [] };
+    if (patches.length === 0) return { result: docNorm, patchCount: 0, errors: [] };
 
     let workingText = docNorm;
 
@@ -117,9 +117,7 @@ function applySearchReplace(
         if (!fuzzyMatched) errors.push(`Bloc SEARCH introuvable : "${search.substring(0, 60)}..."`);
     }
 
-    let result = workingText;
-    if (isCrLf) result = result.replace(/\n/g, '\r\n');
-    return { result, patchCount, errors };
+    return { result: workingText, patchCount, errors };
 }
 
 function parseAiResponse(response: string): {
@@ -1125,37 +1123,70 @@ ${msg}
 
     private async _handleApplyEdit(code: string, targetFile?: string) {
         let uri: vscode.Uri | undefined;
-        if (targetFile) {
-            const clean = targetFile.replace(/\[FILE:|\]/g, '').trim();
-            const files = await vscode.workspace.findFiles(`**/${clean}`, '**/node_modules/**', 1);
-            if (files[0]) { uri = files[0]; }
+
+        if (!targetFile) {
+            const fileMatch = /\[FILE:\s*([^\]\n]+)\]/.exec(code);
+            if (fileMatch) {
+                targetFile = fileMatch[1].trim().split(/[\s(]/)[0];
+            }
         }
-        if (!uri) { uri = vscode.window.activeTextEditor?.document.uri; }
+
+        if (targetFile) {
+            const clean = targetFile.replace(/\[FILE:|\]/g, '').trim().split(/[\s(]/)[0];
+            const files = await vscode.workspace.findFiles(`**/${clean}`, '**/node_modules/**', 5);
+            if (files.length > 0) {
+                uri = files.find(f => f.fsPath.replace(/\\/g, '/').toLowerCase().endsWith(clean.replace(/\\/g, '/').toLowerCase())) || files[0];
+            }
+
+            if (!uri) {
+                const openDoc = vscode.workspace.textDocuments.find(d =>
+                    d.uri.fsPath.replace(/\\/g, '/').toLowerCase().endsWith(clean.replace(/\\/g, '/').toLowerCase())
+                );
+                if (openDoc) uri = openDoc.uri;
+            }
+        }
+
+        if (!uri && !targetFile) {
+            uri = vscode.window.activeTextEditor?.document.uri;
+        }
+
         if (!uri) {
-            vscode.window.showWarningMessage('Aucun fichier actif pour appliquer le patch.');
+            const msg = targetFile ? `Fichier "${targetFile}" introuvable ou non ouvert.` : 'Aucun fichier actif pour appliquer le patch.';
+            vscode.window.showWarningMessage(msg);
             return;
         }
 
         const doc = await vscode.workspace.openTextDocument(uri);
         const oldText = doc.getText();
-        const hasMarkers = /SEARCH/.test(code);
+        const hasMarkers = /SEARCH/i.test(code);
         let previewText = code;
         let patchCount = 0;
 
         if (hasMarkers) {
             const res = applySearchReplace(oldText, code);
-            previewText = res.result;
+            const cleanResult = res.result.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            const eol = doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+            previewText = cleanResult.split('\n').join(eol);
             patchCount = res.patchCount;
             res.errors.forEach(e => vscode.window.showWarningMessage(e));
         }
 
         const previewUri = vscode.Uri.parse(
-            `${AiPreviewProvider.scheme}://patch/${encodeURIComponent(path.basename(uri.fsPath))}`
+            `${AiPreviewProvider.scheme}://patch/${encodeURIComponent(uri.fsPath.replace(/\\/g, '/'))}`
         );
         ChatViewProvider._previewProvider.set(previewUri, previewText);
 
         const diffTitle = `Review: ${path.basename(uri.fsPath)} (${patchCount > 0 ? `${patchCount} modification(s)` : 'Proposition'})`;
         await vscode.commands.executeCommand('vscode.diff', uri, previewUri, diffTitle);
+
+        if (hasMarkers && patchCount === 0) {
+            const retry = await vscode.window.showErrorMessage(
+                `Le bloc SEARCH/REPLACE n'a pas pu être appliqué à "${path.basename(uri.fsPath)}".`,
+                'Fermer'
+            );
+            ChatViewProvider._previewProvider.delete(previewUri);
+            return;
+        }
 
         const result = await vscode.window.showInformationMessage(
             patchCount > 0
@@ -1823,7 +1854,7 @@ ${msg}
             "    text = text.replace(/\\[NEED_FILE:[^\\]]+\\]/g, '');",
             "    text = text.replace(/\\[WILL_MODIFY:[^\\]]+\\]/g, '');",
             "    // Code blocks with [FILE: name] support",
-            "    text = text.replace(/\\[FILE:\\s*([^\\]]+)\\]\\s*```(\\w+)?\\n([\\s\\S]*?)```/g, function(_, fname, lang, code) {",
+            "    text = text.replace(/\\[FILE:\\s*([^ \\]\\n]+)(?: [^\\]\\n]+)?\\]\\s*```(\\w+)?\\n([\\s\\S]*?)```/g, function(_, fname, lang, code) {",
             "        var idx = _registerCode(code);",
             "        var fidx = _registerCode(fname);",
             "        return '<div class=\"code-block patch\"><div class=\"code-header\"><span>📄 '+escapeHtml(fname)+'</span><button onclick=\"applyFilePatch('+idx+','+fidx+')\">✅ Appliquer</button></div><div class=\"code-content\">'+escapeHtml(code)+'</div></div>';",
@@ -1831,7 +1862,7 @@ ${msg}
             "    // Regular code blocks",
             "    text = text.replace(/```(\\w+)?\\n([\\s\\S]*?)```/g, function(_, lang, code) {",
             "        var idx = _registerCode(code);",
-            "        var isPatch = /SEARCH/.test(code);",
+            "        var isPatch = /SEARCH/i.test(code);",
             "        var cls = isPatch ? 'patch' : '';",
             "        var btns = '<button onclick=\"applyCode('+idx+')\">✅ Appliquer</button>';",
             "        if (isPatch) btns += ' <button onclick=\"copyCode('+idx+')\">📋 Copier</button>';",
