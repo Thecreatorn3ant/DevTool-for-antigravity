@@ -322,7 +322,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'revertTo':
                     if (data.index !== undefined) this._handleRevertTo(data.index);
                     break;
-                    break;
                 case 'getTokenBudget':
                     this._sendTokenBudget();
                     break;
@@ -638,6 +637,8 @@ ${msg}
         const msg = this._history[index];
         if (msg.role !== 'user') return;
 
+        // On garde tout jusqu'à l'index (exclus), donc on supprime à partir de l'index
+        const textToRestore = msg.value;
         this._history = this._history.slice(0, index);
         this._updateHistory();
 
@@ -648,7 +649,7 @@ ${msg}
 
         this._view?.webview.postMessage({
             type: 'injectMessage',
-            value: msg.value
+            value: textToRestore
         });
     }
 
@@ -1768,16 +1769,9 @@ ${msg}
             "}",
             "",
             "function addStatusMsg(txt) {",
-            "    var d = document.createElement('div');",
-            "    d.className = 'status-msg';",
-            "    d.innerText = txt;",
-            "    chat.appendChild(d);",
-            "    smartScroll();",
-            "    setTimeout(function() { d.remove(); }, 5000);",
+            "    showNotification(txt, 'info');",
             "}",
             "",
-            "// ─── Notification system ───",
-            "var notificationContainer = null;",
             "function showNotification(message, type) {",
             "    type = type || 'info';",
             "    if (!notificationContainer) {",
@@ -1806,39 +1800,6 @@ ${msg}
             "            }",
             "        }, 300);",
             "    }, 2500);",
-            "}",
-            "",
-            "// ─── Notification system ───",
-            "var notificationContainer = null;",
-            "function showNotification(message, type) {",
-            "    type = type || 'info';",
-            "    if (!notificationContainer) {",
-            "        notificationContainer = document.createElement('div');",
-            "        notificationContainer.id = 'notificationContainer';",
-            "        notificationContainer.style.cssText = 'position:fixed;bottom:80px;right:20px;display:flex;flex-direction:column;gap:8px;z-index:10000;max-width:320px;';",
-            "        document.body.appendChild(notificationContainer);",
-            "    }",
-            "    var colors = {",
-            "        info: { bg: 'rgba(0,210,255,0.15)', border: 'rgba(0,210,255,0.4)', color: '#00d2ff', icon: 'ℹ️' },",
-            "        success: { bg: 'rgba(0,200,100,0.15)', border: 'rgba(0,200,100,0.4)', color: '#6debb0', icon: '✅' },",
-            "        warning: { bg: 'rgba(255,170,0,0.15)', border: 'rgba(255,170,0,0.4)', color: '#ffb74d', icon: '⚠️' },",
-            "        error: { bg: 'rgba(255,80,80,0.15)', border: 'rgba(255,80,80,0.4)', color: '#ff8888', icon: '❌' }",
-            "    };",
-            "    var style = colors[type] || colors.info;",
-            "    var notif = document.createElement('div');",
-            "    notif.style.cssText = 'background:'+style.bg+';border:1px solid '+style.border+';color:'+style.color+';padding:10px 14px;border-radius:8px;font-size:12px;display:flex;align-items:center;gap:8px;box-shadow:0 4px 12px rgba(0,0,0,0.4);animation:slideIn 0.3s ease;';",
-            "    notif.innerHTML = '<span style=\"font-size:16px;flex-shrink:0;\">'+style.icon+'</span><span style=\"flex:1;\">'+escapeHtml(message)+'</span>';",
-            "    notificationContainer.appendChild(notif);",
-            "    setTimeout(function() {",
-            "        notif.style.animation = 'slideOut 0.3s ease';",
-            "        setTimeout(function() { ",
-            "            notif.remove();",
-            "            if (notificationContainer && notificationContainer.children.length === 0) {",
-            "                notificationContainer.remove();",
-            "                notificationContainer = null;",
-            "            }",
-            "        }, 300);",
-            "    }, 2000);",
             "}",
             "",
             "function escapeHtml(t) {",
@@ -2151,7 +2112,12 @@ ${msg}
             "        currentAiMsg = null; currentAiText = '';",
             "    }",
             "    if (m.type === 'fileContent') { addContextFile(m.name, m.content); }",
-            "    if (m.type === 'injectMessage') { promptEl.value = m.value; promptEl.focus(); }",
+            "    if (m.type === 'injectMessage') {",
+            "        promptEl.value = m.value;",
+            "        promptEl.style.height = 'auto';",
+            "        promptEl.style.height = Math.min(promptEl.scrollHeight, 120) + 'px';",
+            "        promptEl.focus();",
+            "    }",
             "    if (m.type === 'restoreHistory' && m.history) {",
             "        chat.innerHTML = '';",
             "        _msgCounter = 0;",
@@ -2220,12 +2186,7 @@ ${msg}
             "        panel.style.display = 'block';",
             "    }",
             "    if (m.type === 'lspAutoReport') {",
-            "        var d = document.createElement('div');",
-            "        d.className = 'status-msg';",
-            "        d.style.cssText = 'color:#ff8888;border-color:rgba(255,80,80,0.3);';",
-            "        d.innerHTML = '🔴 ' + escapeHtml(m.summary) + ' <button onclick=\"sendLspToAi()\" style=\"margin-left:8px;background:rgba(255,80,80,0.2);border:1px solid rgba(255,80,80,0.4);color:#ff8888;border-radius:8px;padding:2px 8px;cursor:pointer;font-size:10px;\">Corriger</button>';",
-            "        chat.appendChild(d); smartScroll();",
-            "        setTimeout(function() { d.remove(); }, 12000);",
+            "        showNotification('🔴 ' + m.summary, 'error');",
             "        _currentLspFormatted = m.formatted;",
             "    }",
             "    if (m.type === 'lspWatchToggled') {",
@@ -2267,19 +2228,13 @@ ${msg}
             "        _agentRunning = false;",
             "        var btn = document.getElementById('btnAgent');",
             "        btn.textContent = '🤖 Agent'; btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';",
-            "        var color = m.type === 'agentDone' ? '#6debb0' : '#ff8888';",
+            "        var type = m.type === 'agentDone' ? 'success' : 'error';",
             "        var icon = m.type === 'agentDone' ? '✅' : '❌';",
             "        var msg = icon + ' Agent terminé — ' + (m.summary || m.reason || 'arrêté');",
-            "        var d = document.createElement('div'); d.className = 'status-msg';",
-            "        d.style.color = color; d.textContent = msg;",
-            "        chat.appendChild(d); smartScroll();",
-            "        setTimeout(function() { d.remove(); }, 8000);",
+            "        showNotification(msg, type);",
             "    }",
             "    if (m.type === 'agentLog') {",
-            "        var d2 = document.createElement('div'); d2.className = 'status-msg';",
-            "        d2.style.fontSize = '10px'; d2.textContent = m.message;",
-            "        chat.appendChild(d2); smartScroll();",
-            "        setTimeout(function() { d2.remove(); }, 6000);",
+            "        showNotification(m.message, 'info');",
             "    }",
             "    if (m.type === 'showPlan') {",
             "        var planEl = document.createElement('div');",

@@ -220,7 +220,7 @@ export class ProviderRouter {
 
         if (preferredUrl) {
             const prefSlot = this._slotKey(preferredUrl, preferredApiKey);
-            const exact = available.find(h => this._slotKey(h.url, this._fullKeys.get(this._slotKey(h.url, h.apiKey)) ?? '') === prefSlot);
+            const exact = available.find(h => this._slotKey(h.url, h.apiKey) === prefSlot);
             if (exact) return this._slotToSelected(exact);
 
             const preferredProvider = allSlots.find(h =>
@@ -274,7 +274,7 @@ export class ProviderRouter {
         h.totalTokens += tokensUsed;
         h.available = true;
         h.lastChecked = Date.now();
-        h.errorRate = Math.max(0, h.errorRate - 0.05);
+        h.errorRate = Math.max(0, h.errorRate - 0.1); // Recuperation plus rapide (0.1 au lieu de 0.05)
         this._syncStats();
         this._drainQueue();
     }

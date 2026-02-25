@@ -244,6 +244,8 @@ export class OllamaClient {
 - Pour suggérer une commande terminal, utilise : [CMD: commande] (ex: [CMD: npm install]). Pour une commande destructive ou risquée : [CMD_IMPORTANT: commande] (ex: [CMD_IMPORTANT: rm -rf dist]). L'utilisateur sera toujours consulté avant exécution selon ses préférences.
 - Si tu identifies plusieurs fichiers à modifier, liste-les TOUS avant de commencer avec : [WILL_MODIFY: fichier1, fichier2, ...]
 - Pour le mode "Réflexion", commence par un bloc [PLAN] qui liste toutes les modifications envisagées avant tout code.
+- Si l'utilisateur demande un "résumé" ou "synthèse", sois extrêmement bref (une seule phrase ou une liste de points courte).
+- Si l'utilisateur demande de "générer des tests", fournis uniquement le code des tests dans un bloc [FILE] sans explications.
 - Si une image t'est fournie, analyse-la attentivement : identifie les erreurs, le code visible, les captures d'écran et base ton analyse sur ce que tu vois.
 
 ━━━ FORMAT OBLIGATOIRE POUR MODIFIER UN FICHIER ━━━
@@ -303,10 +305,13 @@ nouveau_code
                     onUpdate
                 );
             } else {
+                console.error(`[OllamaClient] URL non reconnue : ${url}`);
                 throw new Error(`URL non reconnue : ${url}`);
             }
 
-            this.router.reportSuccess(url, Date.now() - t0, estimateTokens(result), apiKey);
+            const duration = Date.now() - t0;
+            console.log(`[OllamaClient] Requête réussie sur ${url} en ${duration}ms (model: ${model})`);
+            this.router.reportSuccess(url, duration, estimateTokens(result), apiKey);
             return result;
 
         } catch (error: any) {
@@ -330,6 +335,7 @@ nouveau_code
             }
 
             if ((msg.includes('HTTP 4') || msg.includes('HTTP 5')) && attempt < 2) {
+                console.warn(`[OllamaClient] Erreur HTTP détectée sur ${url} : ${msg}. Tentative de failover.`);
                 this.router.reportError(url, false, 60_000, apiKey);
                 try {
                     const next = await this.router.selectProvider(taskType, undefined, hasImages);
