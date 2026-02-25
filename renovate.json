@@ -8,7 +8,7 @@
   ],
   "packageRules": [
     {
-      "description": "Empêcher la mise à jour de l'API VS Code pour rester compatible 1.80",
+      "description": "Empêcher la mise à jour de l'API VS Code pour rester compatible 1.107.0",
       "matchPackageNames": [
         "@types/vscode",
         "@vscode/test-electron"
