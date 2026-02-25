@@ -1,6 +1,23 @@
 import * as vscode from 'vscode';
 import { ProviderRouter, TaskType, FREE_MODELS } from './providerRouter';
 
+import {
+    isLocalUrl,
+    localStream,
+    listLocalModels,
+    checkLocalConnection,
+    getLocalMaxChars,
+    getLocalContextSize,
+} from './localProvider';
+
+import {
+    isCloudUrl,
+    cloudStream,
+    detectProviderName,
+    listGeminiModels,
+    listOpenAICompatModels,
+} from './cloudProvider';
+
 export interface ApiKeyEntry {
     key: string;
     name: string;
@@ -43,90 +60,20 @@ export function estimateTokens(text: string): number {
     return Math.ceil(text.length / 4);
 }
 
-const LOCAL_LIMITS: Record<string, number> = {
-    'llama3.3':         131072,
-    'llama3.2':         131072,
-    'llama3.1':         131072,
-    'llama3':            8192,
-    'mistral-small':    32768,
-    'mistral-nemo':    131072,
-    'mistral':          32768,
-    'mixtral':          45000,
-    'deepseek-r1':     131072,
-    'deepseek-v3':     131072,
-    'deepseek-coder-v2': 131072,
-    'deepseek-coder':   16384,
-    'qwen2.5-coder':   131072,
-    'qwen2.5':         131072,
-    'qwen2':            32768,
-    'qwen':              8192,
-    'codellama':        16384,
-    'phi4':             16384,
-    'phi3.5':           16384,
-    'phi3':              4096,
-    'phi':               2048,
-    'gemma2':            8192,
-    'gemma3':           131072,
-    'gemma':             8192,
-    'llava-llama3':    131072,
-    'llava-phi3':        4096,
-    'llava':             4096,
-    'bakllava':          4096,
-    'moondream':         2048,
-    'command-r':       131072,
-    'granite3':        131072,
-    'starcoder2':       16384,
-    'starcoder':         8192,
-    'falcon':            2048,
-    'vicuna':            4096,
-    'openchat':          8192,
-    'ministral':        131072,
+const VISION_MODELS: Record<string, string[]> = {
+    'gemini': ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
+    'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+    'openrouter': ['google/gemini-flash-1.5', 'openai/gpt-4o-mini', 'anthropic/claude-3-haiku'],
+    'anthropic': ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
+    'local': ['llava', 'bakllava', 'llava-phi3', 'moondream', 'llava-llama3'],
 };
 
-const _dynamicContextCache = new Map<string, number>();
-
-async function fetchOllamaContextSize(model: string, baseUrl: string = 'http://localhost:11434'): Promise<number | null> {
-    const cacheKey = `${baseUrl}||${model}`;
-    if (_dynamicContextCache.has(cacheKey)) return _dynamicContextCache.get(cacheKey)!;
-    try {
-        const res = await fetch(`${baseUrl}/api/show`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: model }),
-            signal: AbortSignal.timeout(3000),
-        });
-        if (!res.ok) return null;
-        const data: any = await res.json();
-        const numCtx: number | undefined =
-            data?.model_info?.['llm.context_length'] ??
-            data?.parameters?.num_ctx ??
-            data?.details?.context_length ??
-            undefined;
-        if (numCtx && numCtx > 0) {
-            _dynamicContextCache.set(cacheKey, numCtx);
-            return numCtx;
-        }
-    } catch { /* unreachable or timeout */ }
-    return null;
-}
-
-function getLocalMaxTokensStatic(model: string): number {
-    const modelLower = model.toLowerCase();
-    const sorted = Object.entries(LOCAL_LIMITS).sort((a, b) => b[0].length - a[0].length);
-    for (const [key, limit] of sorted) {
-        if (modelLower.includes(key)) return limit;
-    }
-    return 8192;
-}
-
-function getLocalMaxChars(model: string): number {
-    return getLocalMaxTokensStatic(model) * 4;
-}
-
-async function getLocalMaxCharsAsync(model: string, baseUrl?: string): Promise<number> {
-    const dynamic = baseUrl ? await fetchOllamaContextSize(model, baseUrl) : null;
-    if (dynamic) return dynamic * 4;
-    return getLocalMaxChars(model);
+function isVisionModel(model: string, provider: string): boolean {
+    const m = model.toLowerCase();
+    const list = VISION_MODELS[provider] || [];
+    if (list.some(v => m.includes(v.toLowerCase()))) return true;
+    return m.includes('vision') || m.includes('llava') || m.includes('4o') ||
+        m.includes('gemini') || m.includes('claude-3') || m.includes('moondream');
 }
 
 function migrateKeyEntry(raw: any): ApiKeyEntry | null {
@@ -143,22 +90,6 @@ function migrateKeyEntry(raw: any): ApiKeyEntry | null {
     };
 }
 
-const VISION_MODELS: Record<string, string[]> = {
-    'gemini': ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
-    'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
-    'openrouter': ['google/gemini-flash-1.5', 'openai/gpt-4o-mini', 'anthropic/claude-3-haiku'],
-    'anthropic': ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
-    'local': ['llava', 'bakllava', 'llava-phi3', 'moondream', 'llava-llama3'],
-};
-
-function isVisionModel(model: string, provider: string): boolean {
-    const m = model.toLowerCase();
-    const visionList = VISION_MODELS[provider] || [];
-    if (visionList.some(v => m.includes(v.toLowerCase()))) return true;
-    return m.includes('vision') || m.includes('llava') || m.includes('4o') ||
-        m.includes('gemini') || m.includes('claude-3') || m.includes('moondream');
-}
-
 export class OllamaClient {
     readonly router: ProviderRouter;
 
@@ -168,19 +99,16 @@ export class OllamaClient {
         this._syncProvidersToRouter();
     }
 
-    private _getConfig() {
-        return vscode.workspace.getConfiguration('local-ai');
-    }
+    private _getConfig() { return vscode.workspace.getConfiguration('local-ai'); }
+    private _getBaseUrl(): string { return this._getConfig().get<string>('ollamaUrl') || 'http://localhost:11434'; }
 
-    private _getBaseUrl(): string {
-        return this._getConfig().get<string>('ollamaUrl') || 'http://localhost:11434';
-    }
+    _detectProvider(url: string): string { return detectProviderName(url); }
+    isCloud(url?: string): boolean { return isCloudUrl(url || this._getBaseUrl()); }
 
     _syncProvidersToRouter() {
         for (const entry of this.getApiKeys()) {
             if (!entry.url) continue;
-            const provider = this._detectProvider(entry.url);
-            this.router.registerProvider(entry.url, entry.name, provider, entry.key);
+            this.router.registerProvider(entry.url, entry.name, this._detectProvider(entry.url), entry.key);
             if (entry.rateLimitedUntil && entry.rateLimitedUntil > Date.now()) {
                 this.router.reportRateLimit(entry.url, entry.rateLimitedUntil - Date.now(), entry.key);
             }
@@ -197,17 +125,14 @@ export class OllamaClient {
     }
 
     async addApiKey(entry: Omit<ApiKeyEntry, 'addedAt'>): Promise<{ success: boolean; reason?: string }> {
-        if (!entry.url) {
-            return { success: false, reason: 'Une URL est requise.' };
-        }
+        if (!entry.url) return { success: false, reason: 'Une URL est requise.' };
         const keys = this.getApiKeys();
         if (keys.find(k => k.url === entry.url && k.key === entry.key)) {
             return { success: false, reason: 'Ce provider avec cette clé est déjà configuré.' };
         }
         keys.push({ ...entry, addedAt: Date.now() });
         await this._saveApiKeys(keys);
-        const provider = this._detectProvider(entry.url);
-        this.router.registerProvider(entry.url, entry.name, provider, entry.key);
+        this.router.registerProvider(entry.url, entry.name, this._detectProvider(entry.url), entry.key);
         return { success: true };
     }
 
@@ -240,9 +165,7 @@ export class OllamaClient {
     getApiKeyStatuses(): ApiKeyStatus[] {
         const now = Date.now();
         return this.getApiKeys().map(entry => {
-            if (!entry.key) {
-                return { entry, status: 'no-key' as ApiKeyStatusCode, statusIcon: '🔴', statusLabel: 'Pas de clé' };
-            }
+            if (!entry.key) return { entry, status: 'no-key' as ApiKeyStatusCode, statusIcon: '🔴', statusLabel: 'Pas de clé' };
             if (entry.rateLimitedUntil && entry.rateLimitedUntil > now) {
                 const secsLeft = Math.ceil((entry.rateLimitedUntil - now) / 1000);
                 return { entry, status: 'cooldown' as ApiKeyStatusCode, cooldownSecsLeft: secsLeft, statusIcon: '🟡', statusLabel: `Cooldown ${secsLeft}s` };
@@ -254,98 +177,52 @@ export class OllamaClient {
     private _getAvailableKey(targetUrl: string): { key: string; entry?: ApiKeyEntry } {
         const keys = this.getApiKeys();
         const now = Date.now();
-        const exact = keys.find(k =>
-            k.url && targetUrl.startsWith(k.url.replace(/\/+$/, '')) &&
-            (!k.rateLimitedUntil || k.rateLimitedUntil < now)
-        );
+        const exact = keys.find(k => k.url && targetUrl.startsWith(k.url.replace(/\/+$/, '')) && (!k.rateLimitedUntil || k.rateLimitedUntil < now));
         if (exact) return { key: exact.key, entry: exact };
-        const platformMatch = keys.find(k =>
-            k.platform && targetUrl.includes(k.platform) &&
-            (!k.rateLimitedUntil || k.rateLimitedUntil < now)
-        );
+        const platformMatch = keys.find(k => k.platform && targetUrl.includes(k.platform) && (!k.rateLimitedUntil || k.rateLimitedUntil < now));
         if (platformMatch) return { key: platformMatch.key, entry: platformMatch };
-        const legacyKey = this._getConfig().get<string>('apiKey') || '';
-        return { key: legacyKey };
+        return { key: this._getConfig().get<string>('apiKey') || '' };
     }
 
     private async _markKeyAsRateLimited(keyValue: string, url: string, cooldownMs = 60_000): Promise<void> {
         const keys = this.getApiKeys();
         let changed = false;
         const updated = keys.map(k => {
-            if (k.key === keyValue && k.url === url) {
-                changed = true;
-                return { ...k, rateLimitedUntil: Date.now() + cooldownMs };
-            }
+            if (k.key === keyValue && k.url === url) { changed = true; return { ...k, rateLimitedUntil: Date.now() + cooldownMs }; }
             return k;
         });
-        if (changed) {
-            await this._saveApiKeys(updated);
-            this.router.reportRateLimit(url, cooldownMs);
-        }
-    }
-
-    isCloud(url?: string): boolean {
-        const u = url || this._getBaseUrl();
-        return !u.includes('localhost') && !u.includes('127.0.0.1');
+        if (changed) { await this._saveApiKeys(updated); this.router.reportRateLimit(url, cooldownMs); }
     }
 
     getTokenBudget(model: string, targetUrl?: string): TokenBudget {
-        const cloud = this.isCloud(targetUrl);
-        if (cloud) {
-            return { used: 0, max: 100000 * 4, isCloud: true };
-        }
-        const maxChars = getLocalMaxChars(model);
-        return { used: 0, max: maxChars, isCloud: false };
+        if (this.isCloud(targetUrl)) return { used: 0, max: 100_000 * 4, isCloud: true };
+        // Synchronous fallback for local models
+        return { used: 0, max: 8192 * 4, isCloud: false };
     }
 
     async getTokenBudgetAsync(model: string, targetUrl?: string): Promise<TokenBudget> {
-        const cloud = this.isCloud(targetUrl);
-        if (cloud) {
-            return { used: 0, max: 100000 * 4, isCloud: true };
-        }
-        const baseUrl = targetUrl || this._getBaseUrl();
-        const maxChars = await getLocalMaxCharsAsync(model, baseUrl);
-        return { used: 0, max: maxChars, isCloud: false };
+        if (this.isCloud(targetUrl)) return { used: 0, max: 100_000 * 4, isCloud: true };
+        const tokens = await getLocalContextSize(model, targetUrl || this._getBaseUrl());
+        return { used: 0, max: tokens * 4, isCloud: false };
     }
 
-    buildContext(
-        files: ContextFile[],
-        history: string,
-        model: string,
-        targetUrl?: string
-    ): { context: string; budget: TokenBudget } {
-        const budget = this.getTokenBudget(model, targetUrl);
-        return this._buildContextFromBudget(files, history, budget);
+    buildContext(files: ContextFile[], history: string, model: string, targetUrl?: string): { context: string; budget: TokenBudget } {
+        return this._buildContextFromBudget(files, history, this.getTokenBudget(model, targetUrl));
     }
 
-    async buildContextAsync(
-        files: ContextFile[],
-        history: string,
-        model: string,
-        targetUrl?: string
-    ): Promise<{ context: string; budget: TokenBudget }> {
-        const budget = await this.getTokenBudgetAsync(model, targetUrl);
-        return this._buildContextFromBudget(files, history, budget);
+    async buildContextAsync(files: ContextFile[], history: string, model: string, targetUrl?: string): Promise<{ context: string; budget: TokenBudget }> {
+        return this._buildContextFromBudget(files, history, await this.getTokenBudgetAsync(model, targetUrl));
     }
 
-    private _buildContextFromBudget(
-        files: ContextFile[],
-        history: string,
-        budget: TokenBudget
-    ): { context: string; budget: TokenBudget } {
-        const historyChars = history.length;
-        let remaining = budget.max - historyChars - 500;
+    private _buildContextFromBudget(files: ContextFile[], history: string, budget: TokenBudget): { context: string; budget: TokenBudget } {
+        let remaining = budget.max - history.length - 500;
         const parts: string[] = [];
-        const activeFiles = files.filter(f => f.isActive);
-        const otherFiles = files.filter(f => !f.isActive);
-        for (const f of [...activeFiles, ...otherFiles]) {
+        for (const f of [...files.filter(f => f.isActive), ...files.filter(f => !f.isActive)]) {
             if (remaining <= 0) break;
             const header = `[FICHIER${f.isActive ? ' ACTIF' : ''}: ${f.name}]\n`;
             const available = remaining - header.length;
             if (available <= 100) break;
-            const truncated = f.content.length > available
-                ? f.content.substring(0, available) + '\n[... tronqué ...]'
-                : f.content;
+            const truncated = f.content.length > available ? f.content.substring(0, available) + '\n[... tronqué ...]' : f.content;
             parts.push(header + truncated);
             remaining -= (header.length + truncated.length);
         }
@@ -353,292 +230,8 @@ export class OllamaClient {
         return { context: parts.join('\n\n'), budget };
     }
 
-    modelSupportsVision(model: string, url: string): boolean {
-        const provider = this._detectProvider(url);
-        return isVisionModel(model, provider);
-    }
-
-    getBestVisionModel(url: string): string | null {
-        const provider = this._detectProvider(url);
-        const list = VISION_MODELS[provider];
-        return list?.[0] ?? null;
-    }
-
-    async generateStreamingResponse(
-        prompt: string,
-        context: string,
-        onUpdate: (chunk: string) => void,
-        modelOverride?: string,
-        targetUrl?: string,
-        images?: AttachedImage[],
-        taskType: TaskType = 'chat',
-        preferredApiKey: string = '',
-        signal?: AbortSignal
-    ): Promise<string> {
-        const hasImages = images && images.length > 0;
-        const config = this._getConfig();
-        const model = modelOverride || config.get<string>('defaultModel') || 'llama3';
-        const fullPrompt = context
-            ? `Contexte du projet:\n${context}\n\n---\nQuestion: ${prompt}`
-            : prompt;
-
-        let slot = await this.router.selectProvider(
-            taskType,
-            targetUrl,
-            hasImages ?? false,
-            preferredApiKey
-        );
-
-        return this._doRequestWithRetry(slot, model, fullPrompt, onUpdate, 0, images, taskType, signal);
-    }
-
-    async generateResponse(
-        prompt: string,
-        context: string = '',
-        modelOverride?: string,
-        targetUrl?: string,
-        images?: AttachedImage[],
-        preferredApiKey: string = '',
-        signal?: AbortSignal
-    ): Promise<string> {
-        let full = '';
-        await this.generateStreamingResponse(
-            prompt, context, (c) => { full += c; },
-            modelOverride, targetUrl, images, 'chat', preferredApiKey, signal
-        );
-        return full;
-    }
-
-    private async _doRequestWithRetry(
-        slot: import('./providerRouter').SelectedSlot,
-        model: string,
-        fullPrompt: string,
-        onUpdate: (chunk: string) => void,
-        attempt: number = 0,
-        images?: AttachedImage[],
-        taskType: TaskType = 'chat',
-        signal?: AbortSignal
-    ): Promise<string> {
-        const { url, apiKey, name: slotName } = slot;
-        const isOpenAI = this._isOpenAI(url);
-        const isGemini = this._isGemini(url);
-        const systemPrompt = this._getSystemPrompt();
-        const hasImages = images && images.length > 0;
-        const t0 = Date.now();
-
-        try {
-            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-            if (apiKey && !isGemini) {
-                headers['Authorization'] = `Bearer ${apiKey}`;
-            }
-            if (url.includes('openrouter')) {
-                headers['HTTP-Referer'] = 'https://github.com/microsoft/vscode';
-                headers['X-Title'] = 'VSCode Antigravity';
-            }
-
-            let endpoint = isOpenAI ? `${url}/chat/completions` : `${url}/api/generate`;
-            let reqBody: any;
-
-            if (isGemini) {
-                endpoint = `${url}/models/${model}:streamGenerateContent?key=${apiKey}`;
-                const parts: any[] = [{ text: systemPrompt + '\n\n' + fullPrompt }];
-                if (hasImages) {
-                    for (const img of images!) {
-                        parts.unshift({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
-                    }
-                }
-                reqBody = { contents: [{ role: 'user', parts }] };
-
-            } else if (isOpenAI) {
-                let userContent: any;
-                if (hasImages) {
-                    userContent = [
-                        ...images!.map(img => ({
-                            type: 'image_url',
-                            image_url: { url: `data:${img.mimeType};base64,${img.base64}` }
-                        })),
-                        { type: 'text', text: fullPrompt }
-                    ];
-                } else {
-                    userContent = fullPrompt;
-                }
-                reqBody = {
-                    model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userContent }
-                    ],
-                    stream: true
-                };
-
-            } else {
-                reqBody = {
-                    model,
-                    prompt: fullPrompt,
-                    system: systemPrompt,
-                    stream: true,
-                    ...(hasImages && { images: images!.map(i => i.base64) })
-                };
-            }
-
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(reqBody),
-                signal
-            });
-
-            if (response.status === 429) {
-                const retryAfterSec = parseInt(response.headers.get('retry-after') || '60', 10);
-                const cooldownMs = (isNaN(retryAfterSec) ? 60 : retryAfterSec) * 1000;
-
-                await this._markKeyAsRateLimited(apiKey, url, cooldownMs);
-                this.router.reportRateLimit(url, cooldownMs, apiKey);
-
-                if (attempt < 4) {
-                    try {
-                        const nextSlot = await this.router.selectProvider(taskType, url, hasImages ?? false, apiKey);
-                        const isSameSlot = nextSlot.url === url && nextSlot.apiKey === apiKey;
-                        if (!isSameSlot) {
-                            const switchMsg = nextSlot.url === url
-                                ? `🔄 Clé épuisée — bascule sur ${nextSlot.name} (même provider)`
-                                : `🔄 Failover → ${nextSlot.name} (${this._detectProvider(nextSlot.url)})`;
-                            vscode.window.showInformationMessage(switchMsg);
-                            return this._doRequestWithRetry(nextSlot, model, fullPrompt, onUpdate, attempt + 1, images, taskType, signal);
-                        }
-                    } catch { }
-                    await new Promise(r => setTimeout(r, 5000));
-                    return this._doRequestWithRetry(slot, model, fullPrompt, onUpdate, attempt + 1, images, taskType, signal);
-                }
-                throw new Error('Tous les providers/clés sont en rate limit. Réessayez dans quelques minutes.');
-            }
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                this.router.reportError(url, false, 60_000, apiKey);
-                if (attempt < 2) {
-                    try {
-                        const nextSlot = await this.router.selectProvider(taskType, undefined, hasImages ?? false);
-                        if (nextSlot.url !== url || nextSlot.apiKey !== apiKey) {
-                            vscode.window.showWarningMessage(`⚠️ Erreur ${response.status} — bascule sur ${nextSlot.name}`);
-                            return this._doRequestWithRetry(nextSlot, model, fullPrompt, onUpdate, attempt + 1, images, taskType, signal);
-                        }
-                    } catch { }
-                }
-                throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
-            }
-
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error('Impossible de lire le flux de réponse.');
-
-            const decoder = new TextDecoder();
-            let fullResponse = '';
-            let buffer = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() ?? '';
-
-                for (const line of lines) {
-                    let cleanLine = line.trim();
-                    if (!cleanLine) continue;
-
-                    if (isGemini) {
-                        if (cleanLine.startsWith(',')) cleanLine = cleanLine.slice(1).trim();
-                        if (cleanLine.startsWith('[') || cleanLine.startsWith(']')) continue;
-                        try {
-                            const data = JSON.parse(cleanLine);
-                            const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                            if (content) { fullResponse += content; onUpdate(content); }
-                        } catch { }
-                    } else if (isOpenAI) {
-                        if (cleanLine === 'data: [DONE]') continue;
-                        if (cleanLine.startsWith('data: ')) {
-                            try {
-                                const data = JSON.parse(cleanLine.slice(6));
-                                const content = data.choices?.[0]?.delta?.content;
-                                if (content) { fullResponse += content; onUpdate(content); }
-                            } catch { }
-                        }
-                    } else {
-                        try {
-                            const data = JSON.parse(cleanLine);
-                            if (data.response) { fullResponse += data.response; onUpdate(data.response); }
-                            if (data.error) throw new Error(data.error);
-                        } catch (e: any) {
-                            if (e.message && !e.message.includes('JSON')) throw e;
-                        }
-                    }
-                }
-            }
-
-            if (buffer.trim()) {
-                if (isOpenAI && buffer.startsWith('data: ') && buffer !== 'data: [DONE]') {
-                    try {
-                        const data = JSON.parse(buffer.slice(6));
-                        const content = data.choices?.[0]?.delta?.content;
-                        if (content) { fullResponse += content; onUpdate(content); }
-                    } catch { }
-                } else if (!isOpenAI) {
-                    try {
-                        const data = JSON.parse(buffer);
-                        if (data.response) { fullResponse += data.response; onUpdate(data.response); }
-                    } catch { }
-                }
-            }
-
-            this.router.reportSuccess(url, Date.now() - t0, estimateTokens(fullResponse), apiKey);
-            return fullResponse;
-
-        } catch (error: any) {
-            const msg = error.message || String(error);
-            this.router.reportError(url, false, 60_000, apiKey);
-            if (msg.includes('fetch') || msg.includes('ECONNREFUSED') || msg.includes('NetworkError')) {
-                vscode.window.showErrorMessage(`Serveur inaccessible sur ${url}`);
-            } else {
-                vscode.window.showErrorMessage(`Erreur IA: ${msg}`);
-            }
-            return '';
-        }
-    }
-
-    async detectBestFreeModel(preferVision: boolean = false): Promise<{ url: string; model: string; provider: string } | null> {
-        const all = await this.listAllModels();
-
-        if (!preferVision) {
-            const local = all.find(m => m.isLocal);
-            if (local) return { url: local.url, model: local.name, provider: 'local' };
-        }
-
-        if (preferVision) {
-            const localVision = all.find(m => m.isLocal && isVisionModel(m.name, 'local'));
-            if (localVision) return { url: localVision.url, model: localVision.name, provider: 'local' };
-        }
-
-        for (const entry of this.getApiKeys()) {
-            if (!this._isGemini(entry.url)) continue;
-            const geminiModels = FREE_MODELS['gemini'];
-            const target = preferVision ? geminiModels[0] : geminiModels[0];
-            if (target) return { url: entry.url, model: target, provider: 'gemini' };
-        }
-
-        for (const entry of this.getApiKeys()) {
-            if (!entry.url.includes('openrouter')) continue;
-            const freeModel = all.find(m => m.url === entry.url);
-            if (freeModel) return { url: entry.url, model: freeModel.name, provider: 'openrouter' };
-        }
-
-        for (const entry of this.getApiKeys()) {
-            if (!entry.url.includes('groq')) continue;
-            const groqModel = FREE_MODELS['groq']?.[0];
-            if (groqModel) return { url: entry.url, model: groqModel, provider: 'groq' };
-        }
-
-        return null;
-    }
+    modelSupportsVision(model: string, url: string): boolean { return isVisionModel(model, this._detectProvider(url)); }
+    getBestVisionModel(url: string): string | null { return VISION_MODELS[this._detectProvider(url)]?.[0] ?? null; }
 
     private _getSystemPrompt(): string {
         return `Tu es une IA d'édition de code intégrée dans VS Code. Ton seul but est d'éditer le code de l'utilisateur.
@@ -654,8 +247,6 @@ export class OllamaClient {
 - Si une image t'est fournie, analyse-la attentivement : identifie les erreurs, le code visible, les captures d'écran et base ton analyse sur ce que tu vois.
 
 ━━━ FORMAT OBLIGATOIRE POUR MODIFIER UN FICHIER ━━━
-Toujours utiliser les blocs SEARCH/REPLACE avec le fichier cible.
-
 \`\`\`typescript
 [FILE: nom_du_fichier.ts]
 <<<< SEARCH
@@ -664,135 +255,140 @@ code_exact_existant
 nouveau_code
 >>>>
 \`\`\`
-
-Règles :
-1. SEARCH doit être un copié-collé STRICT.
-2. Inclure 2 lignes de contexte avant et après.
-3. Si tu crées un nouveau fichier : [CREATE_FILE: chemin] suivi du contenu complet.`;
+1. SEARCH doit être un copié-collé STRICT. 2. Inclure 2 lignes de contexte. 3. Nouveau fichier : [CREATE_FILE: chemin].`;
     }
 
-    private _isOpenAI(url: string): boolean {
-        const u = url.toLowerCase();
-        return u.includes('together') || u.includes('openrouter') || u.includes('openai.com')
-            || u.includes('groq.com') || u.includes('mistral.ai') || u.includes('api.ollama.com')
-            || u.includes('ollama.ai/api') || u.endsWith('/v1') || u.includes('/v1/');
+    async generateStreamingResponse(
+        prompt: string, context: string, onUpdate: (chunk: string) => void,
+        modelOverride?: string, targetUrl?: string, images?: AttachedImage[],
+        taskType: TaskType = 'chat', preferredApiKey: string = '', signal?: AbortSignal
+    ): Promise<string> {
+        const model = modelOverride || this._getConfig().get<string>('defaultModel') || 'llama3';
+        const fullPrompt = context ? `Contexte du projet:\n${context}\n\n---\nQuestion: ${prompt}` : prompt;
+        const slot = await this.router.selectProvider(taskType, targetUrl, !!(images?.length), preferredApiKey);
+        return this._doRequest(slot, model, fullPrompt, onUpdate, 0, images, taskType, signal);
     }
 
-    _detectProvider(url: string): string {
-        const u = (url || '').toLowerCase();
-        if (!u || u.includes('localhost') || u.includes('127.0.0.1')) return 'local';
-        if (u.includes('generativelanguage.googleapis.com')) return 'gemini';
-        if (u.includes('openai.com')) return 'openai';
-        if (u.includes('openrouter.ai')) return 'openrouter';
-        if (u.includes('together.xyz') || u.includes('together.ai')) return 'together';
-        if (u.includes('mistral.ai')) return 'mistral';
-        if (u.includes('groq.com')) return 'groq';
-        if (u.includes('anthropic.com') || u.includes('claude.ai')) return 'anthropic';
-        if (u.includes('api.ollama.com') || u.includes('ollama.ai')) return 'ollama-cloud';
-        return 'ollama-cloud';
+    async generateResponse(
+        prompt: string, context: string = '', modelOverride?: string, targetUrl?: string,
+        images?: AttachedImage[], preferredApiKey: string = '', signal?: AbortSignal
+    ): Promise<string> {
+        let full = '';
+        await this.generateStreamingResponse(prompt, context, c => { full += c; }, modelOverride, targetUrl, images, 'chat', preferredApiKey, signal);
+        return full;
     }
 
-    private _isGemini(url: string): boolean {
-        return url.includes('generativelanguage.googleapis.com');
-    }
+    private async _doRequest(
+        slot: import('./providerRouter').SelectedSlot,
+        model: string, fullPrompt: string, onUpdate: (chunk: string) => void,
+        attempt: number, images?: AttachedImage[], taskType: TaskType = 'chat', signal?: AbortSignal
+    ): Promise<string> {
+        const { url, apiKey } = slot;
+        const systemPrompt = this._getSystemPrompt();
+        const hasImages = !!(images?.length);
+        const t0 = Date.now();
 
-    private async _listGeminiModels(apiKey: string): Promise<string[]> {
         try {
-            const endpoint = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-            const res = await fetch(endpoint, { signal: AbortSignal.timeout(5000) });
-            if (!res.ok) return [];
-            const data: any = await res.json();
-            return (data?.models || [])
-                .map((m: any) => (m.name as string).replace('models/', ''))
-                .filter((n: string) => n.includes('gemini'));
-        } catch { return []; }
+            let result: string;
+
+            if (isLocalUrl(url)) {
+                result = await localStream(
+                    { model, prompt: fullPrompt, systemPrompt, images, signal, baseUrl: url },
+                    onUpdate
+                );
+
+            } else if (isCloudUrl(url)) {
+                result = await cloudStream(
+                    { model, prompt: fullPrompt, systemPrompt, baseUrl: url, apiKey, images, signal },
+                    onUpdate
+                );
+            } else {
+                throw new Error(`URL non reconnue : ${url}`);
+            }
+
+            this.router.reportSuccess(url, Date.now() - t0, estimateTokens(result), apiKey);
+            return result;
+
+        } catch (error: any) {
+            const msg: string = error.message || String(error);
+
+            if (msg.includes('429') || msg.toLowerCase().includes('rate limit')) {
+                await this._markKeyAsRateLimited(apiKey, url, 60_000);
+                this.router.reportRateLimit(url, 60_000, apiKey);
+                if (attempt < 3) {
+                    try {
+                        const next = await this.router.selectProvider(taskType, url, hasImages, apiKey);
+                        if (next.url !== url || next.apiKey !== apiKey) {
+                            vscode.window.showInformationMessage(`🔄 Rate limit — bascule sur ${next.name}`);
+                            return this._doRequest(next, model, fullPrompt, onUpdate, attempt + 1, images, taskType, signal);
+                        }
+                    } catch { }
+                    await new Promise(r => setTimeout(r, 5000));
+                    return this._doRequest(slot, model, fullPrompt, onUpdate, attempt + 1, images, taskType, signal);
+                }
+                throw new Error('Tous les providers sont en rate limit.');
+            }
+
+            if ((msg.includes('HTTP 4') || msg.includes('HTTP 5')) && attempt < 2) {
+                this.router.reportError(url, false, 60_000, apiKey);
+                try {
+                    const next = await this.router.selectProvider(taskType, undefined, hasImages);
+                    if (next.url !== url || next.apiKey !== apiKey) {
+                        vscode.window.showWarningMessage(`⚠️ Erreur — bascule sur ${next.name}`);
+                        return this._doRequest(next, model, fullPrompt, onUpdate, attempt + 1, images, taskType, signal);
+                    }
+                } catch { }
+            }
+
+            this.router.reportError(url, false, 60_000, apiKey);
+            if (msg.includes('ECONNREFUSED') || msg.includes('fetch') || msg.includes('NetworkError')) {
+                vscode.window.showErrorMessage(`Serveur inaccessible : ${url}`);
+            } else {
+                vscode.window.showErrorMessage(`Erreur IA: ${msg}`);
+            }
+            return '';
+        }
     }
 
     async listModels(): Promise<string[]> {
         const url = this._getBaseUrl();
-        const { key: apiKey } = this._getAvailableKey(url);
-        const headers: Record<string, string> = {};
-        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-        try {
-            const isOpenAI = this._isOpenAI(url);
-            const endpoint = isOpenAI ? `${url}/models` : `${url}/api/tags`;
-            const response = await fetch(endpoint, { headers, signal: AbortSignal.timeout(5000) });
-            if (!response.ok) return [];
-            const data: any = await response.json();
-            return isOpenAI
-                ? (data?.data || []).map((m: any) => m.id).filter(Boolean)
-                : (data?.models || []).map((m: any) => m.name).filter(Boolean);
-        } catch { return []; }
+        if (isLocalUrl(url)) return listLocalModels(url);
+        const { key } = this._getAvailableKey(url);
+        return listOpenAICompatModels(url, key);
     }
 
     async listAllModels(): Promise<{ name: string; isLocal: boolean; url: string; provider: string }[]> {
         const result: { name: string; isLocal: boolean; url: string; provider: string }[] = [];
         const seen = new Set<string>();
-
         const LOCAL_URL = 'http://localhost:11434';
-        try {
-            const res = await fetch(`${LOCAL_URL}/api/tags`, { signal: AbortSignal.timeout(2000) });
-            if (res.ok) {
-                const data: any = await res.json();
-                for (const m of (data?.models || []).map((x: any) => x.name).filter(Boolean)) {
-                    const key = `${LOCAL_URL}||${m}`;
-                    if (!seen.has(key)) { seen.add(key); result.push({ name: m, isLocal: true, url: LOCAL_URL, provider: 'local' }); }
-                }
-            }
-        } catch { }
 
-        const configuredUrl = this._getBaseUrl().replace(/\/+$/, '');
-        if (configuredUrl !== LOCAL_URL && configuredUrl !== 'http://127.0.0.1:11434') {
-            try {
-                const isOpenAI = this._isOpenAI(configuredUrl);
-                const endpoint = isOpenAI ? `${configuredUrl}/models` : `${configuredUrl}/api/tags`;
-                const { key } = this._getAvailableKey(configuredUrl);
-                const headers: Record<string, string> = {};
-                if (key) headers['Authorization'] = `Bearer ${key}`;
-                const res = await fetch(endpoint, { headers, signal: AbortSignal.timeout(4000) });
-                if (res.ok) {
-                    const data: any = await res.json();
-                    const list: string[] = isOpenAI
-                        ? (data?.data || []).map((m: any) => m.id as string).filter(Boolean)
-                        : (data?.models || []).map((m: any) => (m.name ?? m.id) as string).filter(Boolean);
-                    for (const m of list) {
-                        const k = `${configuredUrl}||${m}`;
-                        if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: false, url: configuredUrl, provider: this._detectProvider(configuredUrl) }); }
-                    }
-                }
-            } catch { }
+        for (const m of await listLocalModels(LOCAL_URL)) {
+            const k = `${LOCAL_URL}||${m}`;
+            if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LOCAL_URL, provider: 'local' }); }
+        }
+
+        const configUrl = this._getBaseUrl().replace(/\/+$/, '');
+        if (isLocalUrl(configUrl) && configUrl !== LOCAL_URL && configUrl !== 'http://127.0.0.1:11434') {
+            for (const m of await listLocalModels(configUrl)) {
+                const k = `${configUrl}||${m}`;
+                if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: configUrl, provider: 'local' }); }
+            }
         }
 
         for (const entry of this.getApiKeys()) {
             if (!entry.url) continue;
             const baseUrl = entry.url.replace(/\/+$/, '');
-            const alreadyDoneAsLocal = (baseUrl === LOCAL_URL || baseUrl === 'http://127.0.0.1:11434') && !entry.key;
-            if (alreadyDoneAsLocal) continue;
+            if (isLocalUrl(baseUrl) && !entry.key) continue;
             const provider = this._detectProvider(baseUrl);
+            let list: string[] = [];
             try {
-                let list: string[] = [];
-                if (provider === 'gemini' && entry.key) {
-                    list = await this._listGeminiModels(entry.key);
-                } else {
-                    const isOpenAI = this._isOpenAI(baseUrl);
-                    const endpoint = isOpenAI ? `${baseUrl}/models` : `${baseUrl}/api/tags`;
-                    const fetchHeaders: Record<string, string> = {};
-                    if (entry.key) fetchHeaders['Authorization'] = `Bearer ${entry.key}`;
-                    const res = await fetch(endpoint, { headers: fetchHeaders, signal: AbortSignal.timeout(4000) });
-                    if (res.ok) {
-                        const data: any = await res.json();
-                        list = isOpenAI
-                            ? (data?.data || []).map((m: any) => m.id as string).filter(Boolean)
-                            : (data?.models || []).map((m: any) => (m.name ?? m.id) as string).filter(Boolean);
-                    }
-                }
-                const filteredList = provider === 'openrouter' ? list.filter((m: string) => m.endsWith(':free')) : list;
-                for (const m of filteredList) {
-                    const k = `${baseUrl}||${m}`;
-                    const isLocal = !entry.key && (baseUrl === LOCAL_URL || baseUrl === 'http://127.0.0.1:11434');
-                    if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal, url: baseUrl, provider: isLocal ? 'local' : provider }); }
-                }
+                if (provider === 'gemini' && entry.key) list = await listGeminiModels(entry.key);
+                else list = await listOpenAICompatModels(baseUrl, entry.key);
             } catch { }
+            for (const m of list) {
+                const k = `${baseUrl}||${m}`;
+                if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: false, url: baseUrl, provider }); }
+            }
         }
 
         return result;
@@ -800,18 +396,26 @@ Règles :
 
     async checkConnection(): Promise<boolean> {
         const url = this._getBaseUrl();
-        const { key: apiKey } = this._getAvailableKey(url);
-        const headers: Record<string, string> = {};
-        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-        try {
-            const isOpenAI = this._isOpenAI(url);
-            const endpoint = isOpenAI ? `${url}/models` : `${url}/api/tags`;
-            const response = await fetch(endpoint, { headers, signal: AbortSignal.timeout(3000) });
-            return response.ok;
-        } catch { return false; }
+        if (isLocalUrl(url)) return checkLocalConnection(url);
+        try { const { key } = this._getAvailableKey(url); await listOpenAICompatModels(url, key); return true; }
+        catch { return false; }
     }
 
-    dispose() {
-        this.router.dispose();
+    async detectBestFreeModel(preferVision = false): Promise<{ url: string; model: string; provider: string } | null> {
+        const all = await this.listAllModels();
+        if (!preferVision) { const l = all.find(m => m.isLocal); if (l) return { url: l.url, model: l.name, provider: 'local' }; }
+        if (preferVision) { const lv = all.find(m => m.isLocal && isVisionModel(m.name, 'local')); if (lv) return { url: lv.url, model: lv.name, provider: 'local' }; }
+        for (const e of this.getApiKeys()) {
+            if (this._detectProvider(e.url) === 'gemini') { const m = FREE_MODELS['gemini']?.[0]; if (m) return { url: e.url, model: m, provider: 'gemini' }; }
+        }
+        for (const e of this.getApiKeys()) {
+            if (e.url.includes('openrouter')) { const m = all.find(x => x.url === e.url); if (m) return { url: e.url, model: m.name, provider: 'openrouter' }; }
+        }
+        for (const e of this.getApiKeys()) {
+            if (this._detectProvider(e.url) === 'groq') { const m = FREE_MODELS['groq']?.[0]; if (m) return { url: e.url, model: m, provider: 'groq' }; }
+        }
+        return null;
     }
+
+    dispose() { this.router.dispose(); }
 }

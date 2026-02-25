@@ -427,7 +427,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         const isCloud = this._ollamaClient.isCloud(resolvedUrl || undefined);
-        const budget = this._ollamaClient.getTokenBudget(resolvedModel, resolvedUrl || undefined);
+        const budget = await this._ollamaClient.getTokenBudgetAsync(resolvedModel, resolvedUrl || undefined);
 
         const allContextFiles: ContextFile[] = [...this._contextFiles];
         if (webviewContextFiles) {
@@ -460,7 +460,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const limitedFiles = allContextFiles.slice(0, maxFiles);
 
         const formattedHistory = this._getFormattedHistory();
-        const { context, budget: usedBudget } = this._ollamaClient.buildContext(
+        const { context, budget: usedBudget } = await this._ollamaClient.buildContextAsync(
             limitedFiles,
             formattedHistory,
             resolvedModel,
@@ -539,23 +539,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         } catch (e: any) {
             if (e.name === 'AbortError') {
                 // Arrêt volontaire - message dans le chat
-                this._history.push({ 
-                    role: 'ai', 
-                    value: '⚠️ Génération arrêtée par l\'utilisateur.' 
+                this._history.push({
+                    role: 'ai',
+                    value: '⚠️ Génération arrêtée par l\'utilisateur.'
                 });
                 this._updateHistory();
-                this._view.webview.postMessage({ 
-                    type: 'endResponse', 
-                    value: '⚠️ Génération arrêtée par l\'utilisateur.' 
+                this._view.webview.postMessage({
+                    type: 'endResponse',
+                    value: '⚠️ Génération arrêtée par l\'utilisateur.'
                 });
             } else {
                 const msg = e?.message ?? String(e);
                 const is403 = msg.includes('403') || msg.includes('PERMISSION_DENIED');
                 const is404 = msg.includes('404') || msg.includes('not found');
                 const isRateLimit = msg.includes('429') || msg.includes('rate limit');
-                
+
                 let errorMessage = '';
-                
+
                 if (is403) {
                     errorMessage = `❌ **Erreur 403 - Accès refusé**
 
@@ -608,12 +608,12 @@ ${msg}
 • Consultez les logs de l'extension`;
                 }
 
-                this._history.push({ 
-                    role: 'ai', 
-                    value: errorMessage 
+                this._history.push({
+                    role: 'ai',
+                    value: errorMessage
                 });
                 this._updateHistory();
-                
+
                 this._view.webview.postMessage({
                     type: 'endResponse',
                     value: errorMessage
@@ -1181,11 +1181,11 @@ ${msg}
                 preserveFocus: false,
                 viewColumn: vscode.ViewColumn.Active
             });
-            
+
             const changedRanges = this._highlightChangedLines(editor, oldText, previewText);
-            
-            const firstChangedLine = changedRanges.length > 0 
-                ? changedRanges[0].start.line + 1 
+
+            const firstChangedLine = changedRanges.length > 0
+                ? changedRanges[0].start.line + 1
                 : 1;
 
             if (changedRanges.length > 0) {
@@ -1194,15 +1194,15 @@ ${msg}
             }
 
             const fileName = path.basename(uri.fsPath);
-            const detail = patchCount > 0 
-                ? `${patchCount} patch(s) • Ligne ${firstChangedLine}` 
+            const detail = patchCount > 0
+                ? `${patchCount} patch(s) • Ligne ${firstChangedLine}`
                 : 'Fichier remplacé';
 
             this._showNotification(`✅ ${fileName}: ${detail}`, 'success');
 
             const summary = this._buildPatchSummary(fileName, oldText, previewText, patchCount);
-            this._view?.webview.postMessage({ 
-                type: 'patchSummary', 
+            this._view?.webview.postMessage({
+                type: 'patchSummary',
                 summary,
                 fileName,
                 firstLine: firstChangedLine,
@@ -1245,7 +1245,7 @@ ${msg}
         });
         editor.setDecorations(dec, changedRanges);
         setTimeout(() => dec.dispose(), 4000);
-        
+
         return changedRanges;
     }
 
