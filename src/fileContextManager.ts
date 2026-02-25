@@ -103,21 +103,52 @@ export class FileContextManager {
 
     async handleAiFileRequest(
         filePath: string,
-        filePermission: 'ask-all' | 'ask-workspace' | 'allow-all' = 'ask-workspace'
+        filePermission: 'ask-all' | 'ask-workspace' | 'allow-all' = 'allow-all'
     ): Promise<{ name: string; content: string } | null> {
         const inWorkspace = this.isInWorkspace(filePath);
-        const isSensitive = filePath.includes('.env') || filePath.includes('secret') ||
-            filePath.includes('password') || filePath.includes('credential');
+        const fp = filePath.toLowerCase();
 
-        const needsConfirm = isSensitive
-            || filePermission === 'ask-all'
-            || (filePermission === 'ask-workspace' && !inWorkspace);
+        const isSensitive = fp.includes('.env')
+            || fp.includes('secret')
+            || fp.includes('password')
+            || fp.includes('credential')
+            || fp.includes('private_key')
+            || fp.includes('id_rsa')
+            || fp.endsWith('.pem')
+            || fp.endsWith('.pfx')
+            || fp.endsWith('.p12');
 
-        if (needsConfirm) {
-            const msg = isSensitive
-                ? `⚠️ Fichier sensible : "${filePath}". Autoriser l'accès ?`
-                : `Fichier hors workspace : "${filePath}". Autoriser l'accès ?`;
+        const isSystemFile = /^(\/etc\/|\/sys\/|\/proc\/|\/dev\/|c:\\windows\\)/i.test(filePath);
+
+        const isAppData = !inWorkspace && (
+            fp.includes('appdata') ||
+            fp.includes('program files') ||
+            fp.includes('steamapps') ||
+            fp.includes('roaming')
+        );
+
+        if (isSensitive) {
+            const msg = `⚠️ Fichier sensible détecté : "${filePath}"\nCe fichier peut contenir des secrets. Autoriser l'accès à l'IA ?`;
             const r = await vscode.window.showInformationMessage(msg, { modal: true }, '✅ Autoriser', '❌ Refuser');
+            if (r !== '✅ Autoriser') return null;
+        } else if (isSystemFile || isAppData) {
+            const label = isSystemFile ? 'fichier système' : 'fichier app/jeu';
+            const msg = `⚠️ Accès à un ${label} hors workspace : "${filePath}". Autoriser ?`;
+            const r = await vscode.window.showInformationMessage(msg, { modal: true }, '✅ Autoriser', '❌ Refuser');
+            if (r !== '✅ Autoriser') return null;
+        } else if (!inWorkspace && filePermission === 'ask-workspace') {
+            const r = await vscode.window.showInformationMessage(
+                `Fichier hors workspace : "${filePath}". Autoriser l'accès ?`,
+                { modal: false },
+                '✅ Autoriser', '❌ Refuser'
+            );
+            if (r !== '✅ Autoriser') return null;
+        } else if (filePermission === 'ask-all' && !inWorkspace) {
+            const r = await vscode.window.showInformationMessage(
+                `Accès fichier : "${filePath}". Autoriser ?`,
+                { modal: false },
+                '✅ Autoriser', '❌ Refuser'
+            );
             if (r !== '✅ Autoriser') return null;
         }
 

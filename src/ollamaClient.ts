@@ -44,29 +44,89 @@ export function estimateTokens(text: string): number {
 }
 
 const LOCAL_LIMITS: Record<string, number> = {
-    'llama3': 8000,
-    'llama3.1': 8000,
-    'llama3.2': 8000,
-    'codellama': 8000,
-    'mistral': 8000,
-    'mixtral': 16000,
-    'deepseek-coder': 8000,
-    'qwen2.5-coder': 8000,
-    'phi3': 4000,
-    'phi4': 8000,
-    'gemma': 4000,
-    'gemma2': 8000,
-    'llava': 8000,
-    'bakllava': 8000,
-    'moondream': 4000,
+    'llama3.3':         131072,
+    'llama3.2':         131072,
+    'llama3.1':         131072,
+    'llama3':            8192,
+    'mistral-small':    32768,
+    'mistral-nemo':    131072,
+    'mistral':          32768,
+    'mixtral':          45000,
+    'deepseek-r1':     131072,
+    'deepseek-v3':     131072,
+    'deepseek-coder-v2': 131072,
+    'deepseek-coder':   16384,
+    'qwen2.5-coder':   131072,
+    'qwen2.5':         131072,
+    'qwen2':            32768,
+    'qwen':              8192,
+    'codellama':        16384,
+    'phi4':             16384,
+    'phi3.5':           16384,
+    'phi3':              4096,
+    'phi':               2048,
+    'gemma2':            8192,
+    'gemma3':           131072,
+    'gemma':             8192,
+    'llava-llama3':    131072,
+    'llava-phi3':        4096,
+    'llava':             4096,
+    'bakllava':          4096,
+    'moondream':         2048,
+    'command-r':       131072,
+    'granite3':        131072,
+    'starcoder2':       16384,
+    'starcoder':         8192,
+    'falcon':            2048,
+    'vicuna':            4096,
+    'openchat':          8192,
+    'ministral':        131072,
 };
 
-function getLocalMaxChars(model: string): number {
+const _dynamicContextCache = new Map<string, number>();
+
+async function fetchOllamaContextSize(model: string, baseUrl: string = 'http://localhost:11434'): Promise<number | null> {
+    const cacheKey = `${baseUrl}||${model}`;
+    if (_dynamicContextCache.has(cacheKey)) return _dynamicContextCache.get(cacheKey)!;
+    try {
+        const res = await fetch(`${baseUrl}/api/show`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: model }),
+            signal: AbortSignal.timeout(3000),
+        });
+        if (!res.ok) return null;
+        const data: any = await res.json();
+        const numCtx: number | undefined =
+            data?.model_info?.['llm.context_length'] ??
+            data?.parameters?.num_ctx ??
+            data?.details?.context_length ??
+            undefined;
+        if (numCtx && numCtx > 0) {
+            _dynamicContextCache.set(cacheKey, numCtx);
+            return numCtx;
+        }
+    } catch { /* unreachable or timeout */ }
+    return null;
+}
+
+function getLocalMaxTokensStatic(model: string): number {
     const modelLower = model.toLowerCase();
-    for (const [key, limit] of Object.entries(LOCAL_LIMITS)) {
-        if (modelLower.includes(key)) return limit * 4;
+    const sorted = Object.entries(LOCAL_LIMITS).sort((a, b) => b[0].length - a[0].length);
+    for (const [key, limit] of sorted) {
+        if (modelLower.includes(key)) return limit;
     }
-    return 8000 * 4;
+    return 8192;
+}
+
+function getLocalMaxChars(model: string): number {
+    return getLocalMaxTokensStatic(model) * 4;
+}
+
+async function getLocalMaxCharsAsync(model: string, baseUrl?: string): Promise<number> {
+    const dynamic = baseUrl ? await fetchOllamaContextSize(model, baseUrl) : null;
+    if (dynamic) return dynamic * 4;
+    return getLocalMaxChars(model);
 }
 
 function migrateKeyEntry(raw: any): ApiKeyEntry | null {
@@ -238,6 +298,16 @@ export class OllamaClient {
         return { used: 0, max: maxChars, isCloud: false };
     }
 
+    async getTokenBudgetAsync(model: string, targetUrl?: string): Promise<TokenBudget> {
+        const cloud = this.isCloud(targetUrl);
+        if (cloud) {
+            return { used: 0, max: 100000 * 4, isCloud: true };
+        }
+        const baseUrl = targetUrl || this._getBaseUrl();
+        const maxChars = await getLocalMaxCharsAsync(model, baseUrl);
+        return { used: 0, max: maxChars, isCloud: false };
+    }
+
     buildContext(
         files: ContextFile[],
         history: string,
@@ -245,6 +315,24 @@ export class OllamaClient {
         targetUrl?: string
     ): { context: string; budget: TokenBudget } {
         const budget = this.getTokenBudget(model, targetUrl);
+        return this._buildContextFromBudget(files, history, budget);
+    }
+
+    async buildContextAsync(
+        files: ContextFile[],
+        history: string,
+        model: string,
+        targetUrl?: string
+    ): Promise<{ context: string; budget: TokenBudget }> {
+        const budget = await this.getTokenBudgetAsync(model, targetUrl);
+        return this._buildContextFromBudget(files, history, budget);
+    }
+
+    private _buildContextFromBudget(
+        files: ContextFile[],
+        history: string,
+        budget: TokenBudget
+    ): { context: string; budget: TokenBudget } {
         const historyChars = history.length;
         let remaining = budget.max - historyChars - 500;
         const parts: string[] = [];
@@ -340,7 +428,14 @@ export class OllamaClient {
 
         try {
             const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-            if (apiKey && !isGemini) headers['Authorization'] = `Bearer ${apiKey}`;
+            const isOllamaCloud = this._isOllamaCloud(url);
+            if (apiKey && !isGemini) {
+                if (isOllamaCloud) {
+                    headers['Cookie'] = apiKey.startsWith('__session=') ? apiKey : `__session=${apiKey}`;
+                } else {
+                    headers['Authorization'] = `Bearer ${apiKey}`;
+                }
+            }
             if (url.includes('openrouter')) {
                 headers['HTTP-Referer'] = 'https://github.com/microsoft/vscode';
                 headers['X-Title'] = 'VSCode Antigravity';
@@ -595,7 +690,20 @@ Règles :
         if (u.includes('mistral')) return 'mistral';
         if (u.includes('groq')) return 'groq';
         if (u.includes('anthropic') || u.includes('claude')) return 'anthropic';
+        if (u.includes('ollama.com') || u.includes('ollama.ai')) return 'ollama-cloud';
         return 'ollama-cloud';
+    }
+
+    private _isOllamaCloud(url: string): boolean {
+        const u = url.toLowerCase();
+        return u.includes('ollama.com') || u.includes('ollama.ai');
+    }
+
+    private _getOllamaCloudCookie(url: string): string {
+        const keys = this.getApiKeys();
+        const entry = keys.find(k => k.url && url.startsWith(k.url.replace(/\/+$/, '')));
+        if (entry?.key) return entry.key;
+        return this._getConfig().get<string>('apiKey') || '';
     }
 
     private _isGemini(url: string): boolean {

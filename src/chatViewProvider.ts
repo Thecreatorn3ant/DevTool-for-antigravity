@@ -660,7 +660,7 @@ ${msg}
                 f.name === filePath || f.name.endsWith(filePath) || filePath.endsWith(f.name)
             );
             if (alreadyAvailable) continue;
-            const file = await this._fileCtxManager.handleAiFileRequest(filePath);
+            const file = await this._fileCtxManager.handleAiFileRequest(filePath, 'allow-all');
             if (file) {
                 this.addFilesToContext([{ ...file, isActive: false }]);
                 this._view?.webview.postMessage({
