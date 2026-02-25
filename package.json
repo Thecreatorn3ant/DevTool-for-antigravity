@@ -6,7 +6,7 @@
   "publisher": "antigravity",
   "icon": "media/icon.png",
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.107.0"
   },
   "categories": [
     "AI",
@@ -127,7 +127,7 @@
     "test": "node ./out/test/runTest.js"
   },
   "devDependencies": {
-    "@types/vscode": "1.80.0",
+    "@types/vscode": "1.107.0",
     "@types/mocha": "10.0.10",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "6.21.0",
