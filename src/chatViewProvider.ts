@@ -125,12 +125,14 @@ function parseAiResponse(response: string): {
     willModify: string[];
     plan: string | null;
     createFiles: Array<{ name: string; content: string }>;
+    deleteFiles: string[];
     projectSummary: string | null;
     commands: Array<{ cmd: string; isImportant: boolean; badge: string; label: string }>;
 } {
     const needFiles: string[] = [];
     const willModify: string[] = [];
     const createFiles: Array<{ name: string; content: string }> = [];
+    const deleteFiles: string[] = [];
     let plan: string | null = null;
     let projectSummary: string | null = null;
 
@@ -153,6 +155,11 @@ function parseAiResponse(response: string): {
         createFiles.push({ name: m[1].trim(), content: m[2] });
     }
 
+    const deleteFileRegex = /\[DELETE_FILE:\s*([^\]]+)\]/g;
+    while ((m = deleteFileRegex.exec(response)) !== null) {
+        deleteFiles.push(m[1].trim());
+    }
+
     const summaryMatch = /\[PROJECT_SUMMARY\]([\s\S]*?)\[\/PROJECT_SUMMARY\]/.exec(response);
     if (summaryMatch) projectSummary = summaryMatch[1].trim();
 
@@ -168,7 +175,7 @@ function parseAiResponse(response: string): {
         });
     }
 
-    return { needFiles, willModify, plan, createFiles, projectSummary, commands };
+    return { needFiles, willModify, plan, createFiles, deleteFiles, projectSummary, commands };
 }
 
 function extractMultiFilePatches(response: string): Map<string, string> {
@@ -679,6 +686,17 @@ ${msg}
             }
         }
 
+        for (const filePath of parsed.deleteFiles) {
+            const answer = await vscode.window.showInformationMessage(
+                `⚠️ L'IA veut SUPPRIMER : "${filePath}". Confirmer ?`,
+                { modal: true },
+                '🗑 Supprimer', '❌ Annuler'
+            );
+            if (answer === '🗑 Supprimer') {
+                await this._handleFileDeletion(filePath);
+            }
+        }
+
         if (parsed.projectSummary) {
             await this._fileCtxManager.saveProjectSummary(parsed.projectSummary);
             this._showNotification('✅ Mémoire du projet mise à jour', 'success');
@@ -1102,6 +1120,17 @@ ${msg}
         }
     }
 
+    private async _handleFileDeletion(fileName: string) {
+        const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
+        const uri = vscode.Uri.file(path.join(folder, fileName));
+        try {
+            await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: true });
+            this._showNotification(`🗑 Fichier supprimé : ${fileName}`, 'info');
+        } catch (e: any) {
+            vscode.window.showErrorMessage(`Erreur suppression : ${e.message}`);
+        }
+    }
+
     private async _handleFileAccessRequest(target: string) {
         if (target === 'env' || target === '.env') {
             const file = await this._fileCtxManager.handleAiFileRequest('.env');
@@ -1232,14 +1261,19 @@ ${msg}
 
             this._showNotification(`✅ ${fileName}: ${detail}`, 'success');
 
-            const summary = this._buildPatchSummary(fileName, oldText, previewText, patchCount);
-            this._view?.webview.postMessage({
-                type: 'patchSummary',
-                summary,
-                fileName,
-                firstLine: firstChangedLine,
-                linesChanged: changedRanges.length
-            });
+            setTimeout(async () => {
+                const report = this._lspManager.getSnapshot('active');
+                if (report.errorCount > 0) {
+                    const ans = await vscode.window.showErrorMessage(
+                        `⚠️ Des erreurs ont été détectées après l'application du code à "${fileName}". Voulez-vous que l'IA tente de les corriger ?`,
+                        '🤖 Corriger avec l\'IA', '❌ Ignorer'
+                    );
+                    if (ans === '🤖 Corriger avec l\'IA') {
+                        const formatted = this._lspManager.formatForPrompt(report, 5);
+                        this.sendMessageFromEditor(`Des erreurs LSP sont apparues dans "${fileName}" après l'application de tes modifications. Voici les erreurs :\n${formatted}\n\nPropose un correctif.`);
+                    }
+                }
+            }, 1000);
         }
     }
 
@@ -1847,8 +1881,14 @@ ${msg}
             "// ─── Markdown renderer ───",
             "function renderMarkdown(text) {",
             "    var html = '';",
-            "    // Strip [PLAN]...[/PLAN] blocks — shown separately",
-            "    text = text.replace(/\\[PLAN\\][\\s\\S]*?\\[\\/PLAN\\]/g, '');",
+            "    // PLAN blocks with button",
+            "    text = text.replace(/\\[PLAN\\]([\\s\\S]*?)\\[\\/PLAN\\]/g, function(_, plan) {",
+            "        var idx = _registerCode(plan);",
+            "        return '<div class=\"msg plan-msg\"><b>🧠 Plan de l\\'IA :</b><br>' + ",
+            "            escapeHtml(plan).replace(/\\n/g,'<br>') + ",
+            "            '<div style=\"margin-top:10px;\"><button class=\"btn-cloud\" style=\"background:#cc88ff;color:#000;border:none;\" onclick=\"startPlanImplementation(' + idx + ')\">🚀 Démarrer l\\'implémentation</button></div>' +",
+            "            '</div>';",
+            "    });",
             "    text = text.replace(/\\[PROJECT_SUMMARY\\][\\s\\S]*?\\[\\/PROJECT_SUMMARY\\]/g, '');",
             "    // Strip [NEED_FILE:...] and [WILL_MODIFY:...] tags",
             "    text = text.replace(/\\[NEED_FILE:[^\\]]+\\]/g, '');",
@@ -1895,6 +1935,11 @@ ${msg}
             "}",
             "function copyCode(idx) {",
             "    navigator.clipboard.writeText(window._codeRegistry[idx]);",
+            "}",
+            "",
+            "function startPlanImplementation(idx) {",
+            "    var plan = window._codeRegistry[idx];",
+            "    vscode.postMessage({ type: 'injectMessage', value: 'Démarre l\\'implémentation du plan :\\n' + plan });",
             "}",
             "",
             "// ─── Send message ───",
@@ -1992,7 +2037,7 @@ ${msg}
             "    var val = promptEl.value.trim();",
             "    if (!val || isGenerating) return;",
             "    var msgIdx = _msgCounter;",
-            "    _msgCounter++;",
+            "    _msgCounter += 2;",
             "    addMsg(val, 'user', false, msgIdx);",
             "    showStopButton();",
             "    var selectedOpt = modelSelect.options[modelSelect.selectedIndex];",
@@ -2155,11 +2200,11 @@ ${msg}
             "        m.history.forEach(function(msg, index) {",
             "            if (msg.role === 'user') {",
             "                addMsg(msg.value, 'user', false, index);",
-            "                _msgCounter = index + 1;",
             "            } else {",
             "                addMsg(renderMarkdown(msg.value), 'ai', true);",
             "            }",
             "        });",
+            "        _msgCounter = m.history.length;",
             "    }",
             "    if (m.type === 'statusMessage') { addStatusMsg(m.value); }",
             "    if (m.type === 'thinkModeChanged') {",
@@ -2175,23 +2220,7 @@ ${msg}
             "        showNotification(m.message, m.notificationType);",
             "    }",
             "    if (m.type === 'patchSummary') {",
-            "        var ps = document.createElement('div');",
-            "        ps.className = 'patch-summary';",
-            "        var content = '<div style=\"display:flex;align-items:center;gap:8px;margin-bottom:4px;\">';",
-            "        content += '<span style=\"font-size:18px;\">✅</span>';",
-            "        content += '<span style=\"font-weight:700;color:#a0ffcc;\">'+escapeHtml(m.fileName || 'Fichier')+'</span>';",
-            "        content += '</div>';",
-            "        content += '<div style=\"font-size:11px;color:#6debb0;\">';",
-            "        content += m.summary;",
-            "        if (m.firstLine) {",
-            "            content += '<br><span style=\"color:#888;\">📍 Ligne '+m.firstLine;",
-            "            if (m.linesChanged && m.linesChanged > 1) content += ' → '+(m.firstLine + m.linesChanged - 1);",
-            "            content += '</span>';",
-            "        }",
-            "        content += '</div>';",
-            "        ps.innerHTML = content;",
-            "        chat.appendChild(ps);",
-            "        smartScroll();",
+            "        showNotification(m.summary, 'success');",
             "    }",
             "    if (m.type === 'terminalCommand') {",
             "        terminalLog.style.display = 'block';",
