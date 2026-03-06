@@ -60,12 +60,18 @@ export async function listOpenAICompatModels(baseUrl: string, apiKey?: string): 
             headers['X-Title'] = 'VSCode Antigravity';
         }
         const res = await fetch(endpoint, { headers, signal: AbortSignal.timeout(5000) });
-        if (!res.ok) return [];
+        if (!res.ok) {
+            console.warn(`[CloudProvider] listOpenAICompatModels failed for ${url}: ${res.status} ${res.statusText}`);
+            return [];
+        }
         const data: any = await res.json();
         const all: string[] = (data?.data || []).map((m: any) => m.id as string).filter(Boolean);
         if (url.includes('openrouter')) return all.filter(m => m.endsWith(':free'));
         return all;
-    } catch { return []; }
+    } catch (e: any) {
+        console.warn(`[CloudProvider] listOpenAICompatModels error for ${baseUrl}: ${e.message}`);
+        return [];
+    }
 }
 
 export interface CloudRequestOptions {

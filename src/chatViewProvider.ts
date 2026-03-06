@@ -1045,7 +1045,7 @@ ${msg}
 
             const allModels = await this._ollamaClient.listAllModels();
             const PROVIDER_ICONS: Record<string, string> = {
-                local: '⚡', gemini: '✦', openai: '◈', openrouter: '◎',
+                local: '⚡', lmstudio: '💻', gemini: '✦', openai: '◈', openrouter: '◎',
                 together: '◉', mistral: '◆', groq: '▸', anthropic: '◈', 'ollama-cloud': '☁️'
             };
             const formattedModels: Array<{
@@ -1639,11 +1639,11 @@ ${msg}
             "var imagePreviewContainer = null;",
             "",
             "// ─── Provider color helper ───",
-            "var PROVIDER_COLORS = { local:'#b19cd9', gemini:'#7ab4f5', openai:'#74aa9c', openrouter:'#ffb74d', together:'#4dd0e1', mistral:'#ff8a80', groq:'#ffd700', anthropic:'#cc88ff', 'ollama-cloud':'#00d2ff' };",
+            "var PROVIDER_COLORS = { local:'#b19cd9', lmstudio:'#74aa9c', gemini:'#7ab4f5', openai:'#74aa9c', openrouter:'#ffb74d', together:'#4dd0e1', mistral:'#ff8a80', groq:'#ffd700', anthropic:'#cc88ff', 'ollama-cloud':'#00d2ff' };",
             "function providerColor(p) { return PROVIDER_COLORS[p] || '#00d2ff'; }",
             "function providerBanner(p, name) {",
-            "    var icons = { local:'⚡', gemini:'✦', openai:'◈', openrouter:'◎', together:'◉', mistral:'◆', groq:'▸', anthropic:'◈', 'ollama-cloud':'☁️' };",
-            "    var labels = { local:'Mode Local', gemini:'Gemini', openai:'OpenAI', openrouter:'OpenRouter', together:'Together AI', mistral:'Mistral', groq:'Groq', anthropic:'Anthropic', 'ollama-cloud':'Ollama Cloud' };",
+            "    var icons = { local:'⚡', lmstudio:'💻', gemini:'✦', openai:'◈', openrouter:'◎', together:'◉', mistral:'◆', groq:'▸', anthropic:'◈', 'ollama-cloud':'☁️' };",
+            "    var labels = { local:'Mode Local', lmstudio:'LM Studio', gemini:'Gemini', openai:'OpenAI', openrouter:'OpenRouter', together:'Together AI', mistral:'Mistral', groq:'Groq', anthropic:'Anthropic', 'ollama-cloud':'Ollama Cloud' };",
             "    return (icons[p]||'☁️')+' <b>'+(labels[p]||'Cloud')+'</b> &mdash; '+name;",
             "}",
             "",
@@ -1666,7 +1666,7 @@ ${msg}
             "        : filtered.map(function(x, i) {",
             "            var c = providerColor(x.provider);",
             "            var sel = x.value === modelSelect.value ? ' selected' : '';",
-            "            var icons = { local:'⚡', gemini:'✦', openai:'◈', openrouter:'◎', together:'◉', mistral:'◆', groq:'▸', anthropic:'◈', 'ollama-cloud':'☁️' };",
+            "            var icons = { local:'⚡', lmstudio:'💻', gemini:'✦', openai:'◈', openrouter:'◎', together:'◉', mistral:'◆', groq:'▸', anthropic:'◈', 'ollama-cloud':'☁️' };",
             "            var icon = icons[x.provider] || '☁️';",
             "            return '<div class=\"model-opt'+sel+'\" data-value=\"'+x.value+'\" data-idx=\"'+i+'\">'+",
             "                '<span class=\"opt-icon\" style=\"color:'+c+'\">'+icon+'</span>'+",
