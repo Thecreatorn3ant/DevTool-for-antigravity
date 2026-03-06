@@ -361,11 +361,14 @@ nouveau_code
     async listModels(): Promise<string[]> {
         const url = this._getBaseUrl();
         const provider = this._detectProvider(url);
-        if ((isLocalUrl(url) && provider !== 'lmstudio' && provider !== 'openai-compat') || provider === 'ollama-cloud') {
-            const { key } = this._getAvailableKey(url);
+        const { key } = this._getAvailableKey(url);
+
+        if (provider === 'lmstudio' || provider === 'openai-compat') {
+            return listOpenAICompatModels(url, key);
+        }
+        if (isLocalUrl(url) || provider === 'ollama-cloud') {
             return listLocalModels(url, key);
         }
-        const { key } = this._getAvailableKey(url);
         return listOpenAICompatModels(url, key);
     }
 
@@ -375,7 +378,8 @@ nouveau_code
         const LOCAL_URL = 'http://localhost:11434';
         const LMSTUDIO_URL = this._getLmStudioUrl();
 
-        for (const m of await listLocalModels(LOCAL_URL)) {
+        const localModels = await listLocalModels(LOCAL_URL);
+        for (const m of localModels) {
             const k = `${LOCAL_URL}||${m}`;
             if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LOCAL_URL, provider: 'local' }); }
         }
@@ -388,7 +392,8 @@ nouveau_code
             }
         }
 
-        for (const m of await listOpenAICompatModels(LMSTUDIO_URL)) {
+        const lmStudioModels = await listOpenAICompatModels(LMSTUDIO_URL);
+        for (const m of lmStudioModels) {
             const k = `${LMSTUDIO_URL}||${m}`;
             if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LMSTUDIO_URL, provider: 'lmstudio' }); }
         }
@@ -401,7 +406,7 @@ nouveau_code
             let list: string[] = [];
             try {
                 if (provider === 'gemini' && entry.key) list = await listGeminiModels(entry.key);
-                else if (provider === 'ollama-cloud') list = await listLocalModels(baseUrl, entry.key);
+                else if (provider === 'ollama-cloud' || (isLocalUrl(baseUrl) && provider !== 'lmstudio')) list = await listLocalModels(baseUrl, entry.key);
                 else list = await listOpenAICompatModels(baseUrl, entry.key);
             } catch { }
             for (const m of list) {
@@ -417,7 +422,16 @@ nouveau_code
         const url = this._getBaseUrl();
         const provider = this._detectProvider(url);
         const { key } = this._getAvailableKey(url);
-        if ((isLocalUrl(url) && provider !== 'lmstudio' && provider !== 'openai-compat') || provider === 'ollama-cloud') return checkLocalConnection(url, key);
+
+        if (provider === 'lmstudio' || provider === 'openai-compat') {
+            try { await listOpenAICompatModels(url, key); return true; }
+            catch { return false; }
+        }
+
+        if (isLocalUrl(url) || provider === 'ollama-cloud') {
+            return checkLocalConnection(url, key);
+        }
+
         try { await listOpenAICompatModels(url, key); return true; }
         catch { return false; }
     }

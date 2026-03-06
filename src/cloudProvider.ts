@@ -11,12 +11,12 @@ export function detectProviderName(url: string): string {
         if (u.includes(':1234') || u.endsWith('/v1')) return 'lmstudio';
         return 'local';
     }
-    if (u.includes('generativelanguage.googleapis.com'))    return 'gemini';
-    if (u.includes('openai.com'))                           return 'openai';
-    if (u.includes('openrouter.ai'))                        return 'openrouter';
+    if (u.includes('generativelanguage.googleapis.com')) return 'gemini';
+    if (u.includes('openai.com')) return 'openai';
+    if (u.includes('openrouter.ai')) return 'openrouter';
     if (u.includes('together.xyz') || u.includes('together.ai')) return 'together';
-    if (u.includes('mistral.ai'))                           return 'mistral';
-    if (u.includes('groq.com'))                             return 'groq';
+    if (u.includes('mistral.ai')) return 'mistral';
+    if (u.includes('groq.com')) return 'groq';
     if (u.includes('anthropic.com') || u.includes('claude.ai')) return 'anthropic';
     if (u.includes('api.ollama.com') || u.includes('ollama.ai')) return 'ollama-cloud';
     return 'cloud';
@@ -32,7 +32,9 @@ export function detectCloudType(url: string): CloudProviderType {
 
 export function isCloudUrl(url: string): boolean {
     const u = (url || '').toLowerCase();
-    return !!u && (!u.includes('localhost') && !u.includes('127.0.0.1') || u.includes(':1234') || u.endsWith('/v1'));
+    if (!u) return false;
+    if (u.includes('localhost') || u.includes('127.0.0.1')) return false;
+    return true;
 }
 
 export async function listGeminiModels(apiKey: string): Promise<string[]> {
@@ -110,7 +112,7 @@ export async function openAICompatStream(
         model: opts.model,
         messages: [
             { role: 'system', content: opts.systemPrompt },
-            { role: 'user',   content: userContent },
+            { role: 'user', content: userContent },
         ],
         stream: true,
     };
