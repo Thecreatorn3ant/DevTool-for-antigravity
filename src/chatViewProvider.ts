@@ -201,7 +201,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _thinkMode: boolean = false;
     private _currentModel: string = 'llama3';
     private _currentUrl: string = '';
-    private _terminalPermission: 'ask-all' | 'ask-important' | 'allow-all' = 'ask-all';
+    private _terminalPermission: 'ask-all' | 'ask-important' | 'allow-all' = 'ask-important';
     private static readonly _previewProvider = new AiPreviewProvider();
     private static _providerRegistered = false;
     private _lspManager: LspDiagnosticsManager;
@@ -215,7 +215,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         private readonly _fileCtxManager: FileContextManager,
     ) {
         this._history = this._context.workspaceState.get<ChatMessage[]>('chatHistory', []);
-        this._terminalPermission = this._context.workspaceState.get<'ask-all' | 'ask-important' | 'allow-all'>('terminalPermission', 'ask-all');
+        this._terminalPermission = this._context.workspaceState.get<'ask-all' | 'ask-important' | 'allow-all'>('terminalPermission', 'ask-important');
         this._lspManager = new LspDiagnosticsManager(this._context);
         this._agentRunner = new AgentRunner(this._ollamaClient, this._fileCtxManager, this._lspManager, this._context);
         if (!ChatViewProvider._providerRegistered) {
@@ -642,7 +642,6 @@ ${msg}
         const msg = this._history[index];
         if (msg.role !== 'user') return;
 
-        // On garde tout jusqu'à l'index (exclus), donc on supprime à partir de l'index
         const textToRestore = msg.value;
         this._history = this._history.slice(0, index);
         this._updateHistory();
@@ -666,7 +665,7 @@ ${msg}
                 f.name === filePath || f.name.endsWith(filePath) || filePath.endsWith(f.name)
             );
             if (alreadyAvailable) continue;
-            const file = await this._fileCtxManager.handleAiFileRequest(filePath, 'allow-all');
+            const file = await this._fileCtxManager.handleAiFileRequest(filePath, 'ask-workspace');
             if (file) {
                 this.addFilesToContext([{ ...file, isActive: false }]);
                 this._view?.webview.postMessage({
@@ -677,23 +676,31 @@ ${msg}
         }
 
         for (const cf of parsed.createFiles) {
-            const answer = await vscode.window.showInformationMessage(
-                `L'IA veut créer : "${cf.name}". Confirmer ?`,
-                '✅ Créer', '❌ Ignorer'
-            );
-            if (answer === '✅ Créer') {
+            if (this._fileCtxManager.isInWorkspace(cf.name)) {
                 await this._handleFileCreation(cf.name, cf.content);
+            } else {
+                const answer = await vscode.window.showInformationMessage(
+                    `L'IA veut créer : "${cf.name}" (hors workspace). Confirmer ?`,
+                    '✅ Créer', '❌ Ignorer'
+                );
+                if (answer === '✅ Créer') {
+                    await this._handleFileCreation(cf.name, cf.content);
+                }
             }
         }
 
         for (const filePath of parsed.deleteFiles) {
-            const answer = await vscode.window.showInformationMessage(
-                `⚠️ L'IA veut SUPPRIMER : "${filePath}". Confirmer ?`,
-                { modal: true },
-                '🗑 Supprimer', '❌ Annuler'
-            );
-            if (answer === '🗑 Supprimer') {
+            if (this._fileCtxManager.isInWorkspace(filePath)) {
                 await this._handleFileDeletion(filePath);
+            } else {
+                const answer = await vscode.window.showInformationMessage(
+                    `⚠️ L'IA veut SUPPRIMER : "${filePath}" (hors workspace). Confirmer ?`,
+                    { modal: true },
+                    '🗑 Supprimer', '❌ Annuler'
+                );
+                if (answer === '🗑 Supprimer') {
+                    await this._handleFileDeletion(filePath);
+                }
             }
         }
 
@@ -710,30 +717,38 @@ ${msg}
             await this._handleRunCommand(cmd, isImportant);
         }
         const multiPatches = extractMultiFilePatches(response);
-        if (multiPatches.size > 1) {
-            const fileList = Array.from(multiPatches.keys()).join(', ');
-            const answer = await vscode.window.showInformationMessage(
-                `L'IA propose des modifications sur ${multiPatches.size} fichiers : ${fileList}`,
-                '📋 Appliquer tout', '👁 Voir fichier par fichier', '❌ Ignorer'
-            );
-
-            if (answer === '📋 Appliquer tout') {
+        if (multiPatches.size > 0) {
+            const allInWorkspace = Array.from(multiPatches.keys()).every(f => this._fileCtxManager.isInWorkspace(f));
+            if (allInWorkspace) {
                 await this._handleMultiFileApply(
-                    Array.from(multiPatches.entries()).map(([name, patch]) => ({ name, patch }))
+                    Array.from(multiPatches.entries()).map(([name, patch]) => ({ name, patch })),
+                    true
                 );
-            } else if (answer === '👁 Voir fichier par fichier') {
-                for (const [fileName, patch] of multiPatches) {
-                    await this._handleApplyEdit(patch, fileName);
+            } else {
+                const fileList = Array.from(multiPatches.keys()).join(', ');
+                const answer = await vscode.window.showInformationMessage(
+                    `L'IA propose des modifications sur ${multiPatches.size} fichier(s) : ${fileList}`,
+                    '📋 Appliquer', '👁 Voir fichier par fichier', '❌ Ignorer'
+                );
+
+                if (answer === '📋 Appliquer') {
+                    await this._handleMultiFileApply(
+                        Array.from(multiPatches.entries()).map(([name, patch]) => ({ name, patch }))
+                    );
+                } else if (answer === '👁 Voir fichier par fichier') {
+                    for (const [fileName, patch] of multiPatches) {
+                        await this._handleApplyEdit(patch, fileName);
+                    }
                 }
             }
         }
     }
 
-    private async _handleMultiFileApply(patches: Array<{ name: string; patch: string }>) {
+    private async _handleMultiFileApply(patches: Array<{ name: string; patch: string }>, autoAccept: boolean = false) {
         let applied = 0;
         for (const { name, patch } of patches) {
             try {
-                await this._handleApplyEdit(patch, name);
+                await this._handleApplyEdit(patch, name, autoAccept);
                 applied++;
             } catch (e: any) {
                 vscode.window.showErrorMessage(`Erreur sur ${name}: ${e.message}`);
@@ -1150,7 +1165,7 @@ ${msg}
         }
     }
 
-    private async _handleApplyEdit(code: string, targetFile?: string) {
+    private async _handleApplyEdit(code: string, targetFile?: string, autoAccept: boolean = false) {
         let uri: vscode.Uri | undefined;
 
         if (!targetFile) {
@@ -1205,8 +1220,10 @@ ${msg}
         );
         ChatViewProvider._previewProvider.set(previewUri, previewText);
 
-        const diffTitle = `Review: ${path.basename(uri.fsPath)} (${patchCount > 0 ? `${patchCount} modification(s)` : 'Proposition'})`;
-        await vscode.commands.executeCommand('vscode.diff', uri, previewUri, diffTitle);
+        if (!autoAccept) {
+            const diffTitle = `Review: ${path.basename(uri.fsPath)} (${patchCount > 0 ? `${patchCount} modification(s)` : 'Proposition'})`;
+            await vscode.commands.executeCommand('vscode.diff', uri, previewUri, diffTitle);
+        }
 
         if (hasMarkers && patchCount === 0) {
             const retry = await vscode.window.showErrorMessage(
@@ -1217,13 +1234,16 @@ ${msg}
             return;
         }
 
-        const result = await vscode.window.showInformationMessage(
-            patchCount > 0
-                ? `Appliquer ${patchCount} modification(s) à "${path.basename(uri.fsPath)}" ?`
-                : `Aucune modification SEARCH/REPLACE trouvée. Remplacer tout le fichier ?`,
-            { modal: false },
-            '✅ Accepter', '❌ Rejeter'
-        );
+        let result = '✅ Accepter';
+        if (!autoAccept) {
+            result = await vscode.window.showInformationMessage(
+                patchCount > 0
+                    ? `Appliquer ${patchCount} modification(s) à "${path.basename(uri.fsPath)}" ?`
+                    : `Aucune modification SEARCH/REPLACE trouvée. Remplacer tout le fichier ?`,
+                { modal: false },
+                '✅ Accepter', '❌ Rejeter'
+            ) || '❌ Rejeter';
+        }
 
         ChatViewProvider._previewProvider.delete(previewUri);
 

@@ -143,9 +143,10 @@ export class FileContextManager {
                 '✅ Autoriser', '❌ Refuser'
             );
             if (r !== '✅ Autoriser') return null;
-        } else if (filePermission === 'ask-all' && !inWorkspace) {
+        } else if (filePermission === 'ask-all') {
+            const location = inWorkspace ? 'dans le workspace' : 'hors workspace';
             const r = await vscode.window.showInformationMessage(
-                `Accès fichier : "${filePath}". Autoriser ?`,
+                `Accès au fichier (${location}) : "${filePath}". Autoriser ?`,
                 { modal: false },
                 '✅ Autoriser', '❌ Refuser'
             );
