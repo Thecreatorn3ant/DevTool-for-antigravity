@@ -7,7 +7,10 @@ export type CloudProviderType =
 
 export function detectProviderName(url: string): string {
     const u = url.toLowerCase();
-    if (u.includes('localhost') || u.includes('127.0.0.1')) return 'local';
+    if (u.includes('localhost') || u.includes('127.0.0.1')) {
+        if (u.includes(':1234') || u.endsWith('/v1')) return 'lmstudio';
+        return 'local';
+    }
     if (u.includes('generativelanguage.googleapis.com'))    return 'gemini';
     if (u.includes('openai.com'))                           return 'openai';
     if (u.includes('openrouter.ai'))                        return 'openrouter';
@@ -23,12 +26,13 @@ export function detectCloudType(url: string): CloudProviderType {
     const u = url.toLowerCase();
     if (u.includes('generativelanguage.googleapis.com')) return 'gemini';
     if (!u.includes('localhost') && !u.includes('127.0.0.1')) return 'openai-compat';
+    if (u.includes(':1234') || u.endsWith('/v1')) return 'openai-compat'; // LM Studio
     return 'unknown';
 }
 
 export function isCloudUrl(url: string): boolean {
     const u = (url || '').toLowerCase();
-    return !!u && !u.includes('localhost') && !u.includes('127.0.0.1');
+    return !!u && (!u.includes('localhost') && !u.includes('127.0.0.1') || u.includes(':1234') || u.endsWith('/v1'));
 }
 
 export async function listGeminiModels(apiKey: string): Promise<string[]> {

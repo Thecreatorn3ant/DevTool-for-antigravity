@@ -96,11 +96,14 @@ export class OllamaClient {
     constructor() {
         this.router = new ProviderRouter();
         this.router.registerProvider('http://localhost:11434', 'Ollama Local', 'local');
+        const lmStudioUrl = this._getLmStudioUrl();
+        this.router.registerProvider(lmStudioUrl, 'LM Studio', 'lmstudio');
         this._syncProvidersToRouter();
     }
 
     private _getConfig() { return vscode.workspace.getConfiguration('local-ai'); }
     private _getBaseUrl(): string { return this._getConfig().get<string>('ollamaUrl') || 'http://localhost:11434'; }
+    private _getLmStudioUrl(): string { return this._getConfig().get<string>('lmStudioUrl') || 'http://localhost:1234/v1'; }
 
     _detectProvider(url: string): string { return detectProviderName(url); }
     isCloud(url?: string): boolean { return isCloudUrl(url || this._getBaseUrl()); }
@@ -195,13 +198,12 @@ export class OllamaClient {
     }
 
     getTokenBudget(model: string, targetUrl?: string): TokenBudget {
-        if (this.isCloud(targetUrl)) return { used: 0, max: 100_000 * 4, isCloud: true };
-        // Synchronous fallback for local models
+        if (this.isCloud(targetUrl) && this._detectProvider(targetUrl || '') !== 'lmstudio') return { used: 0, max: 100_000 * 4, isCloud: true };
         return { used: 0, max: 8192 * 4, isCloud: false };
     }
 
     async getTokenBudgetAsync(model: string, targetUrl?: string): Promise<TokenBudget> {
-        if (this.isCloud(targetUrl)) return { used: 0, max: 100_000 * 4, isCloud: true };
+        if (this.isCloud(targetUrl) && this._detectProvider(targetUrl || '') !== 'lmstudio') return { used: 0, max: 100_000 * 4, isCloud: true };
         const tokens = await getLocalContextSize(model, targetUrl || this._getBaseUrl());
         return { used: 0, max: tokens * 4, isCloud: false };
     }
@@ -293,7 +295,7 @@ nouveau_code
         try {
             let result: string;
 
-            if (isLocalUrl(url) || this._detectProvider(url) === 'ollama-cloud') {
+            if (isLocalUrl(url) && this._detectProvider(url) !== 'lmstudio' && this._detectProvider(url) !== 'openai-compat' || this._detectProvider(url) === 'ollama-cloud') {
                 result = await localStream(
                     { model, prompt: fullPrompt, systemPrompt, images, signal, baseUrl: url, apiKey },
                     onUpdate
@@ -359,7 +361,7 @@ nouveau_code
     async listModels(): Promise<string[]> {
         const url = this._getBaseUrl();
         const provider = this._detectProvider(url);
-        if (isLocalUrl(url) || provider === 'ollama-cloud') {
+        if ((isLocalUrl(url) && provider !== 'lmstudio' && provider !== 'openai-compat') || provider === 'ollama-cloud') {
             const { key } = this._getAvailableKey(url);
             return listLocalModels(url, key);
         }
@@ -371,6 +373,7 @@ nouveau_code
         const result: { name: string; isLocal: boolean; url: string; provider: string }[] = [];
         const seen = new Set<string>();
         const LOCAL_URL = 'http://localhost:11434';
+        const LMSTUDIO_URL = this._getLmStudioUrl();
 
         for (const m of await listLocalModels(LOCAL_URL)) {
             const k = `${LOCAL_URL}||${m}`;
@@ -378,11 +381,16 @@ nouveau_code
         }
 
         const configUrl = this._getBaseUrl().replace(/\/+$/, '');
-        if (isLocalUrl(configUrl) && configUrl !== LOCAL_URL && configUrl !== 'http://127.0.0.1:11434') {
+        if (isLocalUrl(configUrl) && configUrl !== LOCAL_URL && configUrl !== 'http://127.0.0.1:11434' && this._detectProvider(configUrl) !== 'lmstudio') {
             for (const m of await listLocalModels(configUrl)) {
                 const k = `${configUrl}||${m}`;
                 if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: configUrl, provider: 'local' }); }
             }
+        }
+
+        for (const m of await listOpenAICompatModels(LMSTUDIO_URL)) {
+            const k = `${LMSTUDIO_URL}||${m}`;
+            if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LMSTUDIO_URL, provider: 'lmstudio' }); }
         }
 
         for (const entry of this.getApiKeys()) {
@@ -409,7 +417,7 @@ nouveau_code
         const url = this._getBaseUrl();
         const provider = this._detectProvider(url);
         const { key } = this._getAvailableKey(url);
-        if (isLocalUrl(url) || provider === 'ollama-cloud') return checkLocalConnection(url, key);
+        if ((isLocalUrl(url) && provider !== 'lmstudio' && provider !== 'openai-compat') || provider === 'ollama-cloud') return checkLocalConnection(url, key);
         try { await listOpenAICompatModels(url, key); return true; }
         catch { return false; }
     }

@@ -64,6 +64,11 @@
           "default": "http://localhost:11434",
           "description": "The URL of your local Ollama server."
         },
+        "local-ai.lmStudioUrl": {
+          "type": "string",
+          "default": "http://localhost:1234/v1",
+          "description": "The URL of your local LM Studio server (OpenAI compatible API)."
+        },
         "local-ai.defaultModel": {
           "type": "string",
           "default": "llama3",

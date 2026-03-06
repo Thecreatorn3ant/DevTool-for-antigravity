@@ -49,7 +49,7 @@ function classifyRateLimit(provider: string, cooldownMs: number): RateLimitTier 
     return 'session';
 }
 
-const FAILOVER_PRIORITY: string[] = ['local', 'openrouter', 'groq', 'mistral', 'together', 'openai', 'anthropic', 'ollama-cloud'];
+const FAILOVER_PRIORITY: string[] = ['local', 'lmstudio', 'openrouter', 'groq', 'mistral', 'together', 'openai', 'anthropic', 'ollama-cloud'];
 
 export interface ProviderCapabilities {
     vision: boolean;
@@ -121,6 +121,7 @@ export interface ProviderSuspendedEvent {
 
 const PROVIDER_CAPS: Record<string, ProviderCapabilities> = {
     'local': { vision: true, streaming: true, maxContextK: 32, freeDefault: true },
+    'lmstudio': { vision: true, streaming: true, maxContextK: 32, freeDefault: true },
     'gemini': { vision: true, streaming: true, maxContextK: 128, freeDefault: true },
     'openai': { vision: true, streaming: true, maxContextK: 128, freeDefault: false },
     'openrouter': { vision: true, streaming: true, maxContextK: 128, freeDefault: true },
@@ -136,6 +137,7 @@ export const FREE_MODELS: Record<string, string[]> = {
     'openrouter': [],
     'groq': ['llama-3.1-8b-instant', 'llama3-8b-8192', 'mixtral-8x7b-32768'],
     'local': [],
+    'lmstudio': [],
 };
 
 export class ProviderRouter {
@@ -258,7 +260,7 @@ export class ProviderRouter {
         let score = 100;
         score -= Math.min(30, h.latencyMs / 100);
         score -= h.errorRate * 40;
-        if (h.provider === 'local') score += 20;
+        if (h.provider === 'local' || h.provider === 'lmstudio') score += 20;
         if (task === 'agent' && h.capabilities.maxContextK >= 100) score += 15;
         if (task === 'vision' && h.capabilities.vision) score += 25;
         if (h.capabilities.freeDefault) score += 10;
@@ -454,7 +456,7 @@ export class ProviderRouter {
     }
 
     private _findLocalProvider(): ProviderHealth | undefined {
-        return Array.from(this._health.values()).find(h => h.provider === 'local');
+        return Array.from(this._health.values()).find(h => h.provider === 'local' || h.provider === 'lmstudio');
     }
 
     private _findBestFailover(excludeProvider: string): ProviderHealth | null {
@@ -584,7 +586,7 @@ export class ProviderRouter {
 
     async pingProvider(url: string, apiKey: string = ''): Promise<{ ok: boolean; latencyMs: number }> {
         const t0 = Date.now();
-        const isOpenAI = url.includes('together') || url.includes('openrouter') || url.endsWith('/v1');
+        const isOpenAI = url.includes('together') || url.includes('openrouter') || url.includes(':1234') || url.endsWith('/v1');
         const isGemini = url.includes('generativelanguage.googleapis.com');
         let endpoint = isOpenAI ? `${url}/models` : `${url}/api/tags`;
         if (isGemini && apiKey) endpoint = `${url}/models?key=${apiKey}`;
