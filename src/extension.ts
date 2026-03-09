@@ -2,13 +2,21 @@ import * as vscode from 'vscode';
 import { OllamaClient } from './ollamaClient';
 import { ChatViewProvider } from './chatViewProvider';
 import { FileContextManager } from './fileContextManager';
+import { InlineCompletionProvider } from './inlineCompletionProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('[Antigravity] Extension activée');
 
     const ollamaClient = new OllamaClient();
+    ollamaClient.initSecretStore(context.secrets).then(migrated => {
+        if (migrated > 0) {
+            vscode.window.showInformationMessage(`✅ ${migrated} clé(s) API sécurisée(s) avec succès.`);
+        }
+    });
+
     const fileCtxManager = new FileContextManager(context);
     const chatProvider = new ChatViewProvider(context, ollamaClient, fileCtxManager);
+    const inlineCompletionProvider = new InlineCompletionProvider(ollamaClient);
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
@@ -144,6 +152,22 @@ export function activate(context: vscode.ExtensionContext) {
             if (!goal) return;
             vscode.commands.executeCommand('local-ai.chatView.focus');
             setTimeout(() => chatProvider.runAgentFromCommand(goal), 300);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerInlineCompletionItemProvider(
+            { pattern: '**' },
+            inlineCompletionProvider
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('local-ai.toggleInlineCompletion', () => {
+            const enabled = inlineCompletionProvider.toggle();
+            vscode.window.showInformationMessage(
+                `🚀 Complétion en ligne : ${enabled ? 'Activée' : 'Désactivée'}`
+            );
         })
     );
 

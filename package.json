@@ -2,7 +2,7 @@
   "name": "local-ai-for-antigravity-ide",
   "displayName": "Local AI Integration",
   "description": "Integrate local AI models (Ollama) into VS Code with project context.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "antigravity",
   "icon": "media/icon.png",
   "engines": {
@@ -35,6 +35,11 @@
         "command": "local-ai.runAgent",
         "title": "Antigravity: Lancer l'agent autonome",
         "icon": "$(robot)"
+      },
+      {
+        "command": "local-ai.toggleInlineCompletion",
+        "title": "Antigravity: Basculer la complétion en ligne",
+        "icon": "$(zap)"
       }
     ],
     "viewsContainers": {
@@ -100,6 +105,16 @@
               }
             }
           }
+        },
+        "local-ai.enableInlineCompletion": {
+          "type": "boolean",
+          "default": false,
+          "description": "Activer la complétion de code en ligne (style Copilot)."
+        },
+        "local-ai.inlineCompletionModel": {
+          "type": "string",
+          "default": "llama3",
+          "description": "Le modèle à utiliser pour la complétion en ligne (recommandé: modèle rapide comme llama3:8b ou qwen2.5-coder)."
         }
       }
     },

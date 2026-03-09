@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ProviderRouter, TaskType, FREE_MODELS } from './providerRouter';
+import { SecretKeyStore } from './secretKeyStore';
 
 import {
     isLocalUrl,
@@ -92,6 +93,8 @@ function migrateKeyEntry(raw: any): ApiKeyEntry | null {
 
 export class OllamaClient {
     readonly router: ProviderRouter;
+    private _secretStore?: SecretKeyStore;
+    private _secretStoreReady = false;
 
     constructor() {
         this.router = new ProviderRouter();
@@ -99,6 +102,33 @@ export class OllamaClient {
         const lmStudioUrl = this._getLmStudioUrl();
         this.router.registerProvider(lmStudioUrl, 'LM Studio', 'lmstudio');
         this._syncProvidersToRouter();
+    }
+
+    async initSecretStore(secrets: vscode.SecretStorage): Promise<number> {
+        this._secretStore = new SecretKeyStore(secrets);
+        const migrated = await this._secretStore.migrateFromSettings();
+        this._secretStoreReady = true;
+        await this._syncSecretKeysToRouter();
+        if (migrated > 0) {
+            console.log(`[Antigravity] ${migrated} clé(s) migrée(s) vers SecretStorage.`);
+        }
+        return migrated;
+    }
+
+    get secretStore(): SecretKeyStore | undefined {
+        return this._secretStore;
+    }
+
+    private async _syncSecretKeysToRouter(): Promise<void> {
+        if (!this._secretStore) return;
+        const entries = await this._secretStore.getAllKeysWithSecrets();
+        for (const entry of entries) {
+            if (!entry.url) continue;
+            this.router.registerProvider(entry.url, entry.name, this._detectProvider(entry.url), entry.key);
+            if (entry.rateLimitedUntil && entry.rateLimitedUntil > Date.now()) {
+                this.router.reportRateLimit(entry.url, entry.rateLimitedUntil - Date.now(), entry.key);
+            }
+        }
     }
 
     private _getConfig() { return vscode.workspace.getConfiguration('local-ai'); }
@@ -123,12 +153,38 @@ export class OllamaClient {
         return raw.map(migrateKeyEntry).filter((k): k is ApiKeyEntry => k !== null);
     }
 
+    async getApiKeysAsync(): Promise<ApiKeyEntry[]> {
+        if (this._secretStore && this._secretStoreReady) {
+            const entries = await this._secretStore.getAllKeysWithSecrets();
+            return entries.map(e => ({
+                key: e.key,
+                name: e.name,
+                url: e.url,
+                platform: e.platform,
+                rateLimitedUntil: e.rateLimitedUntil,
+                addedAt: e.addedAt,
+            }));
+        }
+        return this.getApiKeys();
+    }
+
     private async _saveApiKeys(keys: ApiKeyEntry[]): Promise<void> {
         await this._getConfig().update('apiKeys', keys, vscode.ConfigurationTarget.Global);
     }
 
     async addApiKey(entry: Omit<ApiKeyEntry, 'addedAt'>): Promise<{ success: boolean; reason?: string }> {
         if (!entry.url) return { success: false, reason: 'Une URL est requise.' };
+
+        if (this._secretStore && this._secretStoreReady) {
+            const existing = await this._secretStore.findByUrlAndKey(entry.url, entry.key);
+            if (existing) {
+                return { success: false, reason: 'Ce provider avec cette clé est déjà configuré.' };
+            }
+            await this._secretStore.storeKey(entry.name, entry.url, entry.key, entry.platform);
+            this.router.registerProvider(entry.url, entry.name, this._detectProvider(entry.url), entry.key);
+            return { success: true };
+        }
+
         const keys = this.getApiKeys();
         if (keys.find(k => k.url === entry.url && k.key === entry.key)) {
             return { success: false, reason: 'Ce provider avec cette clé est déjà configuré.' };
@@ -140,6 +196,15 @@ export class OllamaClient {
     }
 
     async updateApiKey(keyValue: string, url: string, updates: Partial<Omit<ApiKeyEntry, 'key' | 'addedAt'>>): Promise<void> {
+        if (this._secretStore && this._secretStoreReady) {
+            const all = await this._secretStore.getAllKeysWithSecrets();
+            const entry = all.find(k => k.key === keyValue && k.url === url);
+            if (entry) {
+                await this._secretStore.updateKeyMeta(entry.id, updates);
+                await this._syncSecretKeysToRouter();
+                return;
+            }
+        }
         const keys = this.getApiKeys();
         const idx = keys.findIndex(k => k.key === keyValue && k.url === url);
         if (idx === -1) return;
@@ -149,6 +214,16 @@ export class OllamaClient {
     }
 
     async deleteApiKey(keyValue: string, url: string): Promise<void> {
+        if (this._secretStore && this._secretStoreReady) {
+            const all = await this._secretStore.getAllKeysWithSecrets();
+            const entry = all.find(k => k.key === keyValue && k.url === url);
+            if (entry) {
+                await this._secretStore.deleteKey(entry.id);
+                this.router.unregisterProvider(url, keyValue);
+                await this._syncSecretKeysToRouter();
+                return;
+            }
+        }
         const keys = this.getApiKeys().filter(k => !(k.key === keyValue && k.url === url));
         await this._saveApiKeys(keys);
         this.router.unregisterProvider(url);
@@ -156,6 +231,16 @@ export class OllamaClient {
     }
 
     async resetKeyCooldown(keyValue: string, url: string): Promise<void> {
+        if (this._secretStore && this._secretStoreReady) {
+            const all = await this._secretStore.getAllKeysWithSecrets();
+            const entry = all.find(k => k.key === keyValue && k.url === url);
+            if (entry) {
+                await this._secretStore.resetKeyCooldown(entry.id);
+                this.router.setAvailable(url, true, keyValue);
+                this.router.liftSuspension(url, keyValue);
+                return;
+            }
+        }
         const keys = this.getApiKeys();
         const idx = keys.findIndex(k => k.key === keyValue && k.url === url);
         if (idx === -1) return;
@@ -168,6 +253,19 @@ export class OllamaClient {
     getApiKeyStatuses(): ApiKeyStatus[] {
         const now = Date.now();
         return this.getApiKeys().map(entry => {
+            if (!entry.key) return { entry, status: 'no-key' as ApiKeyStatusCode, statusIcon: '🔴', statusLabel: 'Pas de clé' };
+            if (entry.rateLimitedUntil && entry.rateLimitedUntil > now) {
+                const secsLeft = Math.ceil((entry.rateLimitedUntil - now) / 1000);
+                return { entry, status: 'cooldown' as ApiKeyStatusCode, cooldownSecsLeft: secsLeft, statusIcon: '🟡', statusLabel: `Cooldown ${secsLeft}s` };
+            }
+            return { entry, status: 'available' as ApiKeyStatusCode, statusIcon: '🟢', statusLabel: 'Disponible' };
+        });
+    }
+
+    async getApiKeyStatusesAsync(): Promise<ApiKeyStatus[]> {
+        const now = Date.now();
+        const keys = await this.getApiKeysAsync();
+        return keys.map(entry => {
             if (!entry.key) return { entry, status: 'no-key' as ApiKeyStatusCode, statusIcon: '🔴', statusLabel: 'Pas de clé' };
             if (entry.rateLimitedUntil && entry.rateLimitedUntil > now) {
                 const secsLeft = Math.ceil((entry.rateLimitedUntil - now) / 1000);
