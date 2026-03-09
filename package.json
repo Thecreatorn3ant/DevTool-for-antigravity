@@ -2,7 +2,7 @@
   "name": "local-ai-for-antigravity-ide",
   "displayName": "Local AI Integration",
   "description": "Integrate local AI models (Ollama) into VS Code with project context.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "antigravity",
   "icon": "media/icon.png",
   "engines": {
@@ -35,6 +35,11 @@
         "command": "local-ai.runAgent",
         "title": "Antigravity: Lancer l'agent autonome",
         "icon": "$(robot)"
+      },
+      {
+        "command": "local-ai.toggleInlineCompletion",
+        "title": "Antigravity: Basculer la complétion en ligne",
+        "icon": "$(zap)"
       }
     ],
     "viewsContainers": {
@@ -100,6 +105,16 @@
               }
             }
           }
+        },
+        "local-ai.enableInlineCompletion": {
+          "type": "boolean",
+          "default": false,
+          "description": "Activer la complétion de code en ligne (style Copilot)."
+        },
+        "local-ai.inlineCompletionModel": {
+          "type": "string",
+          "default": "llama3",
+          "description": "Le modèle à utiliser pour la complétion en ligne (recommandé: modèle rapide comme llama3:8b ou qwen2.5-coder)."
         }
       }
     },
@@ -135,9 +150,9 @@
     "@types/vscode": "1.107.0",
     "@types/mocha": "10.0.10",
     "@types/node": "^20.0.0",
-    "@typescript-eslint/eslint-plugin": "8.56.1",
-    "@typescript-eslint/parser": "8.56.1",
-    "eslint": "10.0.2",
+    "@typescript-eslint/eslint-plugin": "8.57.0",
+    "@typescript-eslint/parser": "8.57.0",
+    "eslint": "10.0.3",
     "glob": "13.0.6",
     "mocha": "11.7.5",
     "typescript": "5.x",

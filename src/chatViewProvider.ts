@@ -791,7 +791,7 @@ ${msg}
             keyIdx?: number;
         }
 
-        const statuses = this._ollamaClient.getApiKeyStatuses();
+        const statuses = await this._ollamaClient.getApiKeyStatusesAsync();
 
         const keyItems: KeyMenuItem[] = statuses.map((s, i) => ({
             label: `${s.statusIcon} ${s.entry.name}`,
@@ -874,12 +874,18 @@ ${msg}
                 needsKey: false,
                 detail: 'Serveur Ollama local ou VPS — clé non requise'
             },
+            { label: 'Anthropic Claude', description: 'https://api.anthropic.com/v1', needsKey: true },
+            { label: 'DeepSeek', description: 'https://api.deepseek.com/v1', needsKey: true },
+            { label: 'Google Gemini', description: 'https://generativelanguage.googleapis.com/v1beta', needsKey: true },
             { label: 'OpenAI', description: 'https://api.openai.com/v1', needsKey: true },
             { label: 'OpenRouter', description: 'https://openrouter.ai/api/v1', needsKey: true },
             { label: 'Together AI', description: 'https://api.together.xyz/v1', needsKey: true },
             { label: 'Mistral', description: 'https://api.mistral.ai/v1', needsKey: true },
             { label: 'Groq', description: 'https://api.groq.com/openai/v1', needsKey: true },
-            { label: 'Google Gemini', description: 'https://generativelanguage.googleapis.com/v1beta', needsKey: true },
+            { label: 'Cohere', description: 'https://api.cohere.com/v1', needsKey: true },
+            { label: 'Perplexity', description: 'https://api.perplexity.ai', needsKey: true },
+            { label: 'xAI (Grok)', description: 'https://api.x.ai/v1', needsKey: true },
+            { label: 'Fireworks AI', description: 'https://api.fireworks.ai/inference/v1', needsKey: true },
             {
                 label: 'Autre / Personnalisé…', description: '', needsKey: true,
                 detail: 'Entrer une URL manuellement'
@@ -932,7 +938,7 @@ ${msg}
     }
 
     private async _handleManageKeys() {
-        const statuses = this._ollamaClient.getApiKeyStatuses();
+        const statuses = await this._ollamaClient.getApiKeyStatusesAsync();
         if (statuses.length === 0) {
             const addNow = await vscode.window.showInformationMessage(
                 'Aucune clé configurée. Ajouter une clé ?', 'Ajouter', 'Annuler'
@@ -1038,15 +1044,17 @@ ${msg}
         if (!this._view) return;
 
         try {
-            const savedKeys = this._ollamaClient.getApiKeys();
+            const savedKeys = await this._ollamaClient.getApiKeysAsync();
             const tmpKey = cloudUrl && cloudKey && !savedKeys.find(k => k.url === cloudUrl && k.key === cloudKey)
                 ? { name: 'Cloud', url: cloudUrl, key: cloudKey }
                 : undefined;
 
             const allModels = await this._ollamaClient.listAllModels();
             const PROVIDER_ICONS: Record<string, string> = {
-                local: '⚡', lmstudio: '💻', gemini: '✦', openai: '◈', openrouter: '◎',
-                together: '◉', mistral: '◆', groq: '▸', anthropic: '◈', 'ollama-cloud': '☁️'
+                local: '⚡', gemini: '✦', openai: '◈', openrouter: '◎',
+                together: '◉', mistral: '◆', groq: '▸', anthropic: '◈',
+                deepseek: '◉', cohere: '◈', perplexity: '◎', xai: '◈',
+                fireworks: '⚡', 'ollama-cloud': '☁️'
             };
             const formattedModels: Array<{
                 label: string; value: string; name: string; url: string; isLocal: boolean; provider: string;

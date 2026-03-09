@@ -31,6 +31,36 @@ const QUOTA_PROFILES: Record<string, ProviderQuotaProfile> = {
         suspensionThresholdMs: 24 * 60 * 60 * 1000,
         quotaDescription: 'Quota journalier / crédits',
     },
+    'anthropic': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota par minute / crédits',
+    },
+    'deepseek': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota journalier / crédits',
+    },
+    'cohere': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota journalier (trial gratuit)',
+    },
+    'perplexity': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota par minute / crédits',
+    },
+    'xai': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota par minute / crédits',
+    },
+    'fireworks': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota par minute / crédits',
+    },
     '_default': {
         sessionThresholdMs: 60 * 60 * 1000,
         suspensionThresholdMs: 24 * 60 * 60 * 1000,
@@ -49,7 +79,7 @@ function classifyRateLimit(provider: string, cooldownMs: number): RateLimitTier 
     return 'session';
 }
 
-const FAILOVER_PRIORITY: string[] = ['local', 'lmstudio', 'openrouter', 'groq', 'mistral', 'together', 'openai', 'anthropic', 'ollama-cloud'];
+const FAILOVER_PRIORITY: string[] = ['local', 'lmstudio', 'deepseek', 'openrouter', 'groq', 'fireworks', 'mistral', 'together', 'cohere', 'perplexity', 'xai', 'openai', 'anthropic', 'ollama-cloud'];
 
 export interface ProviderCapabilities {
     vision: boolean;
@@ -129,6 +159,11 @@ const PROVIDER_CAPS: Record<string, ProviderCapabilities> = {
     'mistral': { vision: false, streaming: true, maxContextK: 32, freeDefault: false },
     'groq': { vision: false, streaming: true, maxContextK: 32, freeDefault: false },
     'anthropic': { vision: true, streaming: true, maxContextK: 200, freeDefault: false },
+    'deepseek': { vision: false, streaming: true, maxContextK: 128, freeDefault: false },
+    'cohere': { vision: false, streaming: true, maxContextK: 128, freeDefault: true },
+    'perplexity': { vision: false, streaming: true, maxContextK: 128, freeDefault: false },
+    'xai': { vision: false, streaming: true, maxContextK: 128, freeDefault: false },
+    'fireworks': { vision: false, streaming: true, maxContextK: 32, freeDefault: false },
     'ollama-cloud': { vision: true, streaming: true, maxContextK: 32, freeDefault: false },
 };
 
@@ -136,6 +171,8 @@ export const FREE_MODELS: Record<string, string[]> = {
     'gemini': ['gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-2.0-flash'],
     'openrouter': [],
     'groq': ['llama-3.1-8b-instant', 'llama3-8b-8192', 'mixtral-8x7b-32768'],
+    'deepseek': ['deepseek-chat', 'deepseek-coder'],
+    'cohere': ['command-r', 'command-r-plus'],
     'local': [],
     'lmstudio': [],
 };
