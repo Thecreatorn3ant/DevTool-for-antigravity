@@ -5,7 +5,6 @@ import { OllamaClient, ContextFile, ApiKeyStatus, estimateTokens, AttachedImage 
 import { FileContextManager } from './fileContextManager';
 import { LspDiagnosticsManager } from './lspDiagnosticsManager';
 import { AgentRunner, AgentSession } from './agentRunner';
-import { CommitManager } from './commitManager';
 
 interface ChatMessage {
     role: 'user' | 'ai';
@@ -207,7 +206,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private static _providerRegistered = false;
     private _lspManager: LspDiagnosticsManager;
     private _agentRunner: AgentRunner;
-    private _commitManager: CommitManager;
     private _agentSession: AgentSession | null = null;
     private _lspWatchActive: boolean = false;
 
@@ -220,7 +218,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._terminalPermission = this._context.workspaceState.get<'ask-all' | 'ask-important' | 'allow-all'>('terminalPermission', 'ask-important');
         this._lspManager = new LspDiagnosticsManager(this._context);
         this._agentRunner = new AgentRunner(this._ollamaClient, this._fileCtxManager, this._lspManager, this._context);
-        this._commitManager = new CommitManager(this._ollamaClient, this._fileCtxManager);
         if (!ChatViewProvider._providerRegistered) {
             this._context.subscriptions.push(
                 vscode.workspace.registerTextDocumentContentProvider(
@@ -1237,7 +1234,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleGenerateCommitMessage() {
-        await this._commitManager.generateAndShowCommitUI();
+        const diff = await this._fileCtxManager.getStagedDiffForCommit();
+        if (!diff) {
+            vscode.window.showWarningMessage('Aucun fichier stagé. Faites d\'abord un `git add`.');
+            return;
+        }
+        this.sendMessageFromEditor(
+            `Génère un message de commit conventionnel (feat/fix/refactor/chore/docs/test) pour ce diff stagé. Réponds UNIQUEMENT avec le message de commit, sans explications :\n\`\`\`diff\n${diff.substring(0, 6000)}\n\`\`\``
+        );
     }
 
     private async _handleReviewDiff() {
@@ -2078,144 +2082,439 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         </div>
     </div>
     <script>${script}</script>
+
     <style>
-        #onboardingOverlay {
+        #obOverlay {
             display: none;
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.92);
-            backdrop-filter: blur(6px);
+            position: fixed; inset: 0;
             z-index: 10000;
             align-items: center; justify-content: center;
-        }
-        #onboardingCard {
-            background: linear-gradient(145deg, #080814 0%, #0d0d22 60%, #0a0a18 100%);
-            width: 92%; max-width: 420px;
-            border-radius: 20px;
-            padding: 0;
-            box-shadow: 0 0 80px rgba(0,210,255,0.15), 0 0 0 1px rgba(0,210,255,0.12);
             overflow: hidden;
-            font-family: 'Inter', sans-serif;
         }
-        .ob-header {
-            padding: 14px 18px 12px;
-            border-bottom: 1px solid rgba(255,255,255,0.07);
-            background: linear-gradient(135deg, rgba(0,210,255,0.06) 0%, rgba(120,0,255,0.04) 100%);
+        #obCanvas {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
         }
-        .ob-brand { font-size: 10px; font-weight: 800; letter-spacing: 3px; color: rgba(0,210,255,0.5); text-transform: uppercase; margin-bottom: 4px; }
-        .ob-title { font-size: 17px; font-weight: 900; color: #fff; line-height: 1.2; margin: 0; }
-        .ob-subtitle { font-size: 11px; color: #666; margin-top: 3px; }
-        .ob-progress { display: flex; gap: 6px; padding: 10px 18px 0; }
-        .ob-dot { height: 3px; border-radius: 2px; flex: 1; background: rgba(255,255,255,0.1); transition: background 0.4s ease; }
-        .ob-dot.active { background: #00d2ff; }
-        .ob-dot.done   { background: rgba(0,210,255,0.35); }
-        .ob-body { padding: 14px 18px 18px; }
-        .ob-step { display: none; flex-direction: column; gap: 10px; }
+        #obBg {
+            position: absolute; inset: 0;
+            background: radial-gradient(ellipse at 50% 40%, #0a0a2e 0%, #04040f 65%, #000 100%);
+        }
+
+        #obCard {
+            position: relative;
+            width: 94%; max-width: 430px;
+            background: linear-gradient(160deg, rgba(8,8,24,0.97) 0%, rgba(10,6,28,0.97) 100%);
+            border: 1px solid rgba(0,210,255,0.18);
+            border-radius: 22px;
+            overflow: hidden;
+            box-shadow:
+                0 0 0 1px rgba(0,210,255,0.08),
+                0 0 60px rgba(0,210,255,0.12),
+                0 0 120px rgba(100,0,255,0.08),
+                inset 0 1px 0 rgba(255,255,255,0.06);
+            animation: obCardIn 0.6s cubic-bezier(0.16,1,0.3,1) both;
+        }
+        @keyframes obCardIn {
+            from { opacity:0; transform: translateY(32px) scale(0.95); }
+            to   { opacity:1; transform: translateY(0)    scale(1);    }
+        }
+
+        #obCard::before {
+            content: '';
+            position: absolute; top: 0; left: 0; right: 0; height: 1px;
+            background: linear-gradient(90deg, transparent, #00d2ff, #7b00ff, transparent);
+            opacity: 0.6;
+        }
+
+        .ob-hdr {
+            padding: 20px 22px 14px;
+            position: relative;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .ob-logo-row {
+            display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+        }
+        .ob-logo-hex {
+            width: 36px; height: 36px;
+            background: linear-gradient(135deg, #00d2ff22, #7b00ff22);
+            border: 1px solid rgba(0,210,255,0.3);
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px;
+        }
+        .ob-logo-text { display: flex; flex-direction: column; }
+        .ob-brand-tag {
+            font-size: 9px; font-weight: 800; letter-spacing: 3.5px;
+            color: rgba(0,210,255,0.45); text-transform: uppercase;
+        }
+        .ob-step-label {
+            font-size: 10px; color: #444; margin-top: 1px; font-family: 'Fira Code', monospace;
+        }
+        .ob-title {
+            font-size: 20px; font-weight: 900; color: #fff;
+            line-height: 1.15; margin: 0;
+            text-shadow: 0 0 20px rgba(0,210,255,0.3);
+        }
+        .ob-sub { font-size: 12px; color: #555; margin-top: 5px; }
+
+        .ob-progress {
+            display: flex; gap: 5px; padding: 12px 22px 0;
+        }
+        .ob-seg {
+            height: 2px; flex: 1; border-radius: 2px;
+            background: rgba(255,255,255,0.07);
+            transition: background 0.5s ease, box-shadow 0.5s ease;
+            overflow: hidden; position: relative;
+        }
+        .ob-seg.done { background: rgba(0,210,255,0.3); }
+        .ob-seg.active {
+            background: rgba(0,210,255,0.6);
+            box-shadow: 0 0 8px rgba(0,210,255,0.5);
+        }
+        .ob-seg.active::after {
+            content: '';
+            position: absolute; top: 0; left: -100%; width: 60%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent);
+            animation: obShimmer 1.6s 0.3s infinite;
+        }
+        @keyframes obShimmer {
+            to { left: 200%; }
+        }
+
+        .ob-body { padding: 18px 22px 22px; }
+        .ob-step {
+            display: none; flex-direction: column; gap: 12px;
+            animation: obStepIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
+        }
         .ob-step.active { display: flex; }
-        .ob-desc { font-size: 12px; color: #aaa; line-height: 1.5; margin: 0; }
-        .ob-options { display: flex; gap: 10px; }
-        .ob-btn { flex: 1; padding: 10px 8px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: #ccc; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: 'Inter', sans-serif; text-align: center; }
-        .ob-btn:hover { background: rgba(255,255,255,0.09); color: #fff; border-color: rgba(255,255,255,0.2); }
-        .ob-btn.primary { background: rgba(0,210,255,0.12); border-color: rgba(0,210,255,0.35); color: #00d2ff; }
-        .ob-btn.primary:hover { background: rgba(0,210,255,0.22); border-color: rgba(0,210,255,0.6); }
-        .ob-btn.purple { background: rgba(120,0,255,0.12); border-color: rgba(160,0,255,0.35); color: #cc88ff; }
-        .ob-btn.purple:hover { background: rgba(120,0,255,0.22); border-color: rgba(160,0,255,0.6); }
-        .ob-tip { background: rgba(0,210,255,0.05); border: 1px solid rgba(0,210,255,0.15); border-radius: 10px; padding: 10px 12px; font-size: 11px; color: #888; line-height: 1.5; }
-        .ob-tip b { color: #00d2ff; }
-        .ob-tip a { color: #00d2ff; text-decoration: none; font-weight: 700; }
-        .ob-tip a:hover { text-decoration: underline; }
-        .ob-screen-hint { background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.1); border-radius: 8px; padding: 10px 14px; font-size: 11px; color: #555; line-height: 1.8; }
-        .ob-screen-hint code { background: rgba(0,210,255,0.1); color: #00d2ff; padding: 1px 5px; border-radius: 4px; font-family: 'Fira Code', monospace; }
-        .ob-key-input { width: 100%; background: rgba(0,0,0,0.5); border: 1px solid rgba(0,210,255,0.25); border-radius: 10px; color: #e0e0e0; padding: 11px 14px; font-size: 13px; outline: none; font-family: 'Inter', sans-serif; transition: border-color 0.2s; box-sizing: border-box; }
-        .ob-key-input:focus { border-color: rgba(0,210,255,0.55); }
-        .ob-key-input::placeholder { color: #444; }
-        .ob-skip { text-align: center; font-size: 11px; color: #444; cursor: pointer; padding-top: 4px; }
-        .ob-skip:hover { color: #666; }
-        @keyframes obSlideIn { from { opacity: 0; transform: translateY(24px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
-        #onboardingCard { animation: obSlideIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
+        @keyframes obStepIn {
+            from { opacity:0; transform: translateX(16px); }
+            to   { opacity:1; transform: translateX(0);    }
+        }
+
+        .ob-eyebrow {
+            font-size: 9px; font-weight: 800; letter-spacing: 2.5px;
+            text-transform: uppercase; color: rgba(0,210,255,0.4); margin-bottom: 2px;
+        }
+        .ob-h2 { font-size: 16px; font-weight: 900; color: #fff; margin: 0 0 4px; }
+        .ob-desc { font-size: 12px; color: #777; line-height: 1.6; margin: 0; }
+        .ob-desc b { color: #aaa; }
+        .ob-desc a { color: #00d2ff; text-decoration: none; font-weight: 700; }
+        .ob-desc a:hover { text-decoration: underline; }
+
+        .ob-box {
+            background: rgba(0,210,255,0.04);
+            border: 1px solid rgba(0,210,255,0.12);
+            border-radius: 12px; padding: 12px 14px;
+            font-size: 11px; color: #666; line-height: 1.7;
+        }
+        .ob-box.purple {
+            background: rgba(120,0,255,0.05);
+            border-color: rgba(160,0,255,0.15);
+        }
+        .ob-box b { color: #00d2ff; }
+        .ob-box.purple b { color: #cc88ff; }
+        .ob-box code {
+            background: rgba(0,210,255,0.1); color: #00d2ff;
+            padding: 1px 6px; border-radius: 4px;
+            font-family: 'Fira Code', monospace; font-size: 10px;
+        }
+        .ob-box a { color: #00d2ff; font-weight: 700; text-decoration: none; }
+        .ob-box a:hover { text-decoration: underline; }
+        .ob-box-row { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; }
+        .ob-box-icon { flex-shrink: 0; font-size: 13px; margin-top: 1px; }
+
+        .ob-features {
+            display: grid; grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .ob-feat {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 10px; padding: 10px 12px;
+            font-size: 11px; color: #666;
+            transition: all 0.2s;
+        }
+        .ob-feat:hover { background: rgba(0,210,255,0.05); border-color: rgba(0,210,255,0.2); }
+        .ob-feat-icon { font-size: 18px; margin-bottom: 5px; }
+        .ob-feat-name { font-weight: 700; color: #aaa; font-size: 12px; }
+        .ob-feat-desc { color: #555; font-size: 10px; margin-top: 2px; line-height: 1.4; }
+
+        .ob-shortcuts { display: flex; flex-direction: column; gap: 5px; }
+        .ob-shortcut {
+            display: flex; align-items: center; justify-content: space-between;
+            background: rgba(255,255,255,0.025);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 8px; padding: 7px 12px;
+            font-size: 11px;
+        }
+        .ob-shortcut-desc { color: #777; }
+        .ob-shortcut-key {
+            background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.12);
+            color: #aaa; padding: 2px 8px; border-radius: 5px;
+            font-family: 'Fira Code', monospace; font-size: 10px;
+            white-space: nowrap;
+        }
+
+        .ob-btns { display: flex; gap: 8px; }
+        .ob-btn {
+            flex: 1; padding: 11px 12px; border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.04);
+            color: #aaa; font-size: 12px; font-weight: 700;
+            cursor: pointer; transition: all 0.2s;
+            font-family: 'Inter', sans-serif; text-align: center;
+        }
+        .ob-btn:hover { background: rgba(255,255,255,0.08); color: #fff; border-color: rgba(255,255,255,0.2); }
+        .ob-btn.cyan {
+            background: rgba(0,210,255,0.08);
+            border-color: rgba(0,210,255,0.3); color: #00d2ff;
+        }
+        .ob-btn.cyan:hover { background: rgba(0,210,255,0.18); border-color: rgba(0,210,255,0.55); }
+        .ob-btn.purple {
+            background: rgba(120,0,255,0.1);
+            border-color: rgba(160,0,255,0.3); color: #cc88ff;
+        }
+        .ob-btn.purple:hover { background: rgba(120,0,255,0.2); border-color: rgba(160,0,255,0.55); }
+        .ob-btn.launch {
+            background: linear-gradient(135deg, rgba(0,210,255,0.15), rgba(100,0,255,0.15));
+            border-color: rgba(0,210,255,0.4); color: #fff;
+            font-size: 14px; padding: 14px;
+            box-shadow: 0 0 20px rgba(0,210,255,0.1);
+        }
+        .ob-btn.launch:hover {
+            background: linear-gradient(135deg, rgba(0,210,255,0.25), rgba(100,0,255,0.25));
+            box-shadow: 0 0 30px rgba(0,210,255,0.2);
+            transform: translateY(-1px);
+        }
+        .ob-btn:active { transform: scale(0.97); }
+        .ob-skip {
+            text-align: center; font-size: 11px; color: #333;
+            cursor: pointer; padding-top: 2px; transition: color 0.2s;
+        }
+        .ob-skip:hover { color: #555; }
+
+        .ob-input {
+            width: 100%; background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(0,210,255,0.2); border-radius: 10px;
+            color: #e0e0e0; padding: 11px 14px;
+            font-size: 13px; outline: none;
+            font-family: 'Inter', sans-serif;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            box-sizing: border-box;
+        }
+        .ob-input:focus {
+            border-color: rgba(0,210,255,0.5);
+            box-shadow: 0 0 0 3px rgba(0,210,255,0.07);
+        }
+        .ob-input::placeholder { color: #333; }
+
+        .ob-status {
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 12px; border-radius: 10px;
+            font-size: 11px; font-weight: 600;
+            transition: all 0.3s;
+        }
+        .ob-status.idle { background: rgba(255,255,255,0.03); color: #444; border: 1px solid rgba(255,255,255,0.05); }
+        .ob-status.testing { background: rgba(0,210,255,0.06); color: #00d2ff; border: 1px solid rgba(0,210,255,0.2); }
+        .ob-status.ok { background: rgba(0,200,100,0.08); color: #6debb0; border: 1px solid rgba(0,200,100,0.2); }
+        .ob-status.fail { background: rgba(255,80,80,0.07); color: #ff8888; border: 1px solid rgba(255,80,80,0.2); }
+        .ob-status-dot {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: currentColor; flex-shrink: 0;
+        }
+        .ob-status.testing .ob-status-dot { animation: obPulse 1s infinite; }
+        @keyframes obPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(1.4)} }
+
+        .ob-celebration {
+            text-align: center; padding: 8px 0 4px;
+        }
+        .ob-big-icon {
+            font-size: 52px; margin-bottom: 10px;
+            animation: obOrbit 3s ease-in-out infinite;
+            display: block;
+        }
+        @keyframes obOrbit {
+            0%,100% { transform: translateY(0) rotate(-3deg); }
+            50%      { transform: translateY(-8px) rotate(3deg); }
+        }
+        .ob-celebration h3 {
+            font-size: 22px; font-weight: 900; color: #fff; margin: 0 0 6px;
+            text-shadow: 0 0 30px rgba(0,210,255,0.4);
+        }
+        .ob-celebration p { font-size: 12px; color: #555; line-height: 1.6; margin: 0 0 14px; }
     </style>
 
-    <div id="onboardingOverlay">
-        <div id="onboardingCard">
-            <div class="ob-header">
-                <div class="ob-brand">Antigravity IDE</div>
-                <h2 class="ob-title">Bienvenue 🚀</h2>
-                <p class="ob-subtitle">Configuration rapide en quelques étapes</p>
+    <div id="obOverlay">
+        <div id="obBg"></div>
+        <canvas id="obCanvas"></canvas>
+
+        <div id="obCard">
+            <!-- Header -->
+            <div class="ob-hdr">
+                <div class="ob-logo-row">
+                    <div class="ob-logo-hex">🛸</div>
+                    <div class="ob-logo-text">
+                        <span class="ob-brand-tag">Antigravity IDE</span>
+                        <span class="ob-step-label" id="obStepLabel">step 1 / 5</span>
+                    </div>
+                </div>
+                <h2 class="ob-title" id="obMainTitle">Mission Briefing</h2>
+                <p class="ob-sub" id="obMainSub">Configure your AI co-pilot in 60 seconds.</p>
             </div>
+
             <div class="ob-progress">
-                <div class="ob-dot active" id="dot1"></div>
-                <div class="ob-dot" id="dot2"></div>
-                <div class="ob-dot" id="dot3"></div>
-                <div class="ob-dot" id="dot4"></div>
+                <div class="ob-seg active" id="obSeg1"></div>
+                <div class="ob-seg" id="obSeg2"></div>
+                <div class="ob-seg" id="obSeg3"></div>
+                <div class="ob-seg" id="obSeg4"></div>
+                <div class="ob-seg" id="obSeg5"></div>
             </div>
+
             <div class="ob-body">
 
-                <div class="ob-step active" id="ob-step1">
-                    <div class="ob-tip" style="font-size:11px; line-height:1.5;">
-                        <b>Ollama</b> — modèles IA locaux, privés et gratuits.<br>
-                        ➜ <a href="https://ollama.com/download" target="_blank">ollama.com/download ↗</a><br>
-                        Puis dans un terminal : <code>ollama run llama3</code><br>
-                        <span style="color:#555;">Serveur auto-détecté sur <code style="color:#555;">localhost:11434</code></span>
-                    </div>
-                    <p class="ob-desc" style="margin:0; font-size:12px;">Ollama est-il installé sur votre machine ?</p>
-                    <div class="ob-options">
-                        <button class="ob-btn primary" onclick="obNext(2)">✅ Oui</button>
-                        <button class="ob-btn" onclick="obNext(2)">⏭️ Non / Passer</button>
-                    </div>
-                </div>
-
-                <div class="ob-step" id="ob-step2">
-                    <div class="ob-tip" style="font-size:11px; line-height:1.5;">
-                        <b>LM Studio</b> — interface graphique pour modèles locaux.<br>
-                        ➜ <a href="https://lmstudio.ai/" target="_blank">lmstudio.ai ↗</a><br>
-                        API auto-détectée sur <code>localhost:1234</code><br>
-                        <span style="color:#555;">Onglet <code style="color:#555;">Local Server</code> → Start Server</span>
-                    </div>
-                    <p class="ob-desc" style="margin:0; font-size:12px;">Utilisez-vous LM Studio ?</p>
-                    <div class="ob-options">
-                        <button class="ob-btn primary" onclick="obNext(3)">✅ Oui</button>
-                        <button class="ob-btn" onclick="obNext(3)">⏭️ Non / Passer</button>
-                    </div>
-                </div>
-
-                <div class="ob-step" id="ob-step3">
-                    <p class="ob-desc">Envie d'un modèle <b>Cloud rapide et gratuit</b> pour compléter le local ? <b>Google Gemini</b> offre un tier généreux sans carte bancaire.</p>
-                    <div class="ob-tip">
-                        <b>Pourquoi Gemini ?</b><br>
-                        • 1 million de tokens de contexte<br>
-                        • Streaming rapide, multimodal (images + code)<br>
-                        • 100% gratuit sur le plan standard
-                    </div>
-                    <p class="ob-desc" style="margin:0;">Voulez-vous configurer <b>Google Gemini</b> maintenant ?</p>
-                    <div class="ob-options">
-                        <button class="ob-btn purple" onclick="obShowGeminiSetup()">✨ Oui, configurer</button>
-                        <button class="ob-btn" onclick="obNext(4)">Non, plus tard →</button>
-                    </div>
-                    <div id="ob-gemini-setup" style="display:none; flex-direction:column; gap:10px;">
-                        <div class="ob-tip">
-                            1. Allez sur ➜ <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com/app/apikey ↗</a><br>
-                            2. Cliquez sur <b>"Create API key"</b> (gratuit, sans CB)<br>
-                            3. Copiez la clé et collez-la ci-dessous
+                <div class="ob-step active" id="obStep1">
+                    <p class="ob-desc">
+                        <b>Antigravity</b> is your AI pair-programmer, built directly into VS Code.<br>
+                        It runs <b>locally</b> (private, free) or connects to <b>cloud models</b> — your choice.
+                    </p>
+                    <div class="ob-features">
+                        <div class="ob-feat">
+                            <div class="ob-feat-icon">⚡</div>
+                            <div class="ob-feat-name">Inline completion</div>
+                            <div class="ob-feat-desc">Copilot-style suggestions as you type</div>
                         </div>
-                        <input type="password" id="ob-gemini-key" class="ob-key-input" placeholder="AIzaSy… (votre clé Google AI Studio)" autocomplete="off" />
-                        <button class="ob-btn purple" onclick="obSaveGeminiAndNext()">💾 Sauvegarder et continuer →</button>
-                        <div class="ob-skip" onclick="obNext(4)">Passer cette étape</div>
+                        <div class="ob-feat">
+                            <div class="ob-feat-icon">🤖</div>
+                            <div class="ob-feat-name">Autonomous agent</div>
+                            <div class="ob-feat-desc">Multi-step tasks, reads & writes files</div>
+                        </div>
+                        <div class="ob-feat">
+                            <div class="ob-feat-icon">✨</div>
+                            <div class="ob-feat-name">Smart commits</div>
+                            <div class="ob-feat-desc">Conventional commits from your diff</div>
+                        </div>
+                        <div class="ob-feat">
+                            <div class="ob-feat-icon">🔴</div>
+                            <div class="ob-feat-name">LSP analysis</div>
+                            <div class="ob-feat-desc">Fix TypeScript errors with one click</div>
+                        </div>
+                    </div>
+                    <div class="ob-btns">
+                        <button class="ob-btn launch" onclick="obGo(2)">Begin setup →</button>
                     </div>
                 </div>
 
-                <div class="ob-step" id="ob-step4">
-                    <div style="text-align:center; padding: 8px 0 4px;">
-                        <div style="font-size:48px; margin-bottom:10px;">🎉</div>
-                        <h3 style="color:#fff; font-size:18px; font-weight:900; margin:0 0 8px;">Tout est prêt !</h3>
-                        <p style="color:#888; font-size:13px; line-height:1.6; margin:0 0 16px;">Sélectionnez un modèle dans le menu en haut à droite et commencez à coder avec l'IA.</p>
+                <div class="ob-step" id="obStep2">
+                    <div class="ob-eyebrow">Option A — Local & Private</div>
+                    <div class="ob-h2">🦙 Ollama</div>
+                    <p class="ob-desc">Run AI models on your own machine. <b>No API key, no internet, no cost.</b></p>
+                    <div class="ob-box">
+                        <div class="ob-box-row">
+                            <span class="ob-box-icon">1.</span>
+                            <span>Download from <a href="https://ollama.com/download" target="_blank">ollama.com/download ↗</a></span>
+                        </div>
+                        <div class="ob-box-row">
+                            <span class="ob-box-icon">2.</span>
+                            <span>In a terminal: <code>ollama run llama3</code></span>
+                        </div>
+                        <div class="ob-box-row">
+                            <span class="ob-box-icon">3.</span>
+                            <span>Auto-detected on <code>localhost:11434</code> ✓</span>
+                        </div>
                     </div>
-                    <div class="ob-tip" style="font-size:12px; line-height:1.8;">
-                        <b>Quelques fonctions pour démarrer :</b><br>
-                        📎 <b>Fichier</b> — ajouter un fichier au contexte IA<br>
-                        🧠 <b>Réflexion</b> — l'IA planifie avant d'agir<br>
-                        🤖 <b>Agent</b> — mode autonome multi-étapes<br>
-                        ☁️ <b>Cloud</b> — gérer vos clés API supplémentaires
+                    <div class="ob-status idle" id="obOllamaStatus">
+                        <div class="ob-status-dot"></div>
+                        <span id="obOllamaStatusText">Not tested</span>
                     </div>
-                    <button class="ob-btn primary" style="font-size:14px; padding:14px;" onclick="obFinish()">🚀 Commencer à utiliser Antigravity</button>
+                    <div class="ob-btns">
+                        <button class="ob-btn cyan" onclick="obTestOllama()">🔍 Test connection</button>
+                        <button class="ob-btn" onclick="obGo(3)">Skip →</button>
+                    </div>
+                    <div class="ob-eyebrow" style="margin-top:4px;">Option B — Local GUI</div>
+                    <p class="ob-desc" style="margin-top:-4px;font-size:11px;">
+                        Using <a href="https://lmstudio.ai" target="_blank">LM Studio</a>?
+                        Start its local server — auto-detected on <code style="background:rgba(0,210,255,0.08);color:#00d2ff;padding:1px 5px;border-radius:4px;font-size:10px;font-family:'Fira Code',monospace;">localhost:1234</code>
+                    </p>
+                    <div class="ob-skip" onclick="obGo(3)">I'll set this up later</div>
+                </div>
+
+                <div class="ob-step" id="obStep3">
+                    <div class="ob-eyebrow">Cloud Provider — Free Tier</div>
+                    <div class="ob-h2">✨ Google Gemini</div>
+                    <p class="ob-desc">The most generous free tier available — <b>no credit card required.</b></p>
+                    <div class="ob-box purple">
+                        <div class="ob-box-row"><span class="ob-box-icon">🧠</span><span><b>1M token</b> context window — fit entire codebases</span></div>
+                        <div class="ob-box-row"><span class="ob-box-icon">🚀</span><span>Fast streaming, vision support (screenshots → code)</span></div>
+                        <div class="ob-box-row"><span class="ob-box-icon">🆓</span><span>Free on standard plan — no billing setup</span></div>
+                    </div>
+                    <div id="obGeminiForm" style="display:flex;flex-direction:column;gap:8px;">
+                        <p class="ob-desc" style="font-size:11px;">
+                            Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com ↗</a>
+                            → <b>Create API key</b> → paste below:
+                        </p>
+                        <input type="password" id="obGeminiKey" class="ob-input"
+                            placeholder="AIzaSy…" autocomplete="off" />
+                        <div class="ob-status idle" id="obGeminiStatus">
+                            <div class="ob-status-dot"></div>
+                            <span id="obGeminiStatusText">Enter key above to validate</span>
+                        </div>
+                        <div class="ob-btns">
+                            <button class="ob-btn purple" onclick="obSaveGemini()">💾 Save & continue</button>
+                            <button class="ob-btn" onclick="obGo(4)">Skip</button>
+                        </div>
+                    </div>
+                    <div class="ob-skip" onclick="obGo(4)">I'll configure cloud providers later</div>
+                </div>
+
+                <div class="ob-step" id="obStep4">
+                    <div class="ob-eyebrow">Quick Reference</div>
+                    <div class="ob-h2">🗺️ The cockpit</div>
+                    <p class="ob-desc">Everything you need is in the toolbar below the chat.</p>
+                    <div class="ob-shortcuts">
+                        <div class="ob-shortcut">
+                            <span class="ob-shortcut-desc">📎 <b>File</b> — add file to AI context</span>
+                            <span class="ob-shortcut-key">click</span>
+                        </div>
+                        <div class="ob-shortcut">
+                            <span class="ob-shortcut-desc">🧠 <b>Think</b> — plan before acting</span>
+                            <span class="ob-shortcut-key">click</span>
+                        </div>
+                        <div class="ob-shortcut">
+                            <span class="ob-shortcut-desc">✨ <b>Commit</b> — AI commit message from diff</span>
+                            <span class="ob-shortcut-key">click</span>
+                        </div>
+                        <div class="ob-shortcut">
+                            <span class="ob-shortcut-desc">🤖 <b>Agent</b> — autonomous multi-step tasks</span>
+                            <span class="ob-shortcut-key">click</span>
+                        </div>
+                        <div class="ob-shortcut">
+                            <span class="ob-shortcut-desc">🔴 <b>LSP</b> — fix type errors with AI</span>
+                            <span class="ob-shortcut-key">click</span>
+                        </div>
+                        <div class="ob-shortcut">
+                            <span class="ob-shortcut-desc">☁️ <b>Cloud</b> — manage API keys</span>
+                            <span class="ob-shortcut-key">header</span>
+                        </div>
+                    </div>
+                    <div class="ob-btns" style="margin-top:4px;">
+                        <button class="ob-btn cyan" onclick="obGo(5)">Got it →</button>
+                    </div>
+                </div>
+
+                <div class="ob-step" id="obStep5">
+                    <div class="ob-celebration">
+                        <span class="ob-big-icon" id="obRocket">🛸</span>
+                        <h3>You're cleared for launch.</h3>
+                        <p>Select a model in the top-right corner<br>and start building with your AI co-pilot.</p>
+                    </div>
+                    <div class="ob-box" style="font-size:11px; line-height:1.8;">
+                        <b>Pro tip:</b> Open any file, then ask the AI to explain it.<br>
+                        Use <b>📎 File</b> to give it full context of your project.
+                    </div>
+                    <button class="ob-btn launch" onclick="obFinish()">🚀 Launch Antigravity</button>
                 </div>
 
             </div>
@@ -2223,41 +2522,195 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     </div>
 
     <script>
-        var _obCurrent = 1;
-        function _obUpdateDots(step) {
-            for (var i = 1; i <= 4; i++) {
-                var dot = document.getElementById('dot' + i);
-                if (!dot) continue;
-                dot.className = 'ob-dot' + (i < step ? ' done' : i === step ? ' active' : '');
+    (function() {
+        var _cur = 1;
+        var TOTAL = 5;
+
+        var TITLES = {
+            1: ['Mission Briefing',    'Configure your AI co-pilot in 60 seconds.'],
+            2: ['Local AI Setup',      'Private, offline, completely free.'],
+            3: ['Cloud Boost',         'Optional — supercharge with Gemini\'s free tier.'],
+            4: ['The Cockpit',         'A quick tour before you launch.'],
+            5: ['All Systems Go',      'Your AI-powered IDE is ready.'],
+        };
+
+        window.obGo = function(step) {
+            var prev = document.getElementById('obStep' + _cur);
+            if (prev) { prev.classList.remove('active'); }
+            _cur = step;
+            var next = document.getElementById('obStep' + step);
+            if (next) { next.classList.add('active'); }
+
+            var t = TITLES[step] || ['', ''];
+            var el = document.getElementById('obMainTitle');
+            var sub = document.getElementById('obMainSub');
+            var lbl = document.getElementById('obStepLabel');
+            if (el) { el.style.opacity = '0'; setTimeout(function(){ el.textContent = t[0]; el.style.opacity = '1'; el.style.transition = 'opacity 0.25s'; }, 120); }
+            if (sub) { sub.style.opacity = '0'; setTimeout(function(){ sub.textContent = t[1]; sub.style.opacity = '1'; sub.style.transition = 'opacity 0.25s'; }, 180); }
+            if (lbl) lbl.textContent = 'step ' + step + ' / ' + TOTAL;
+
+            for (var i = 1; i <= TOTAL; i++) {
+                var seg = document.getElementById('obSeg' + i);
+                if (!seg) continue;
+                seg.className = 'ob-seg' + (i < step ? ' done' : i === step ? ' active' : '');
             }
-        }
-        function obNext(step) {
-            var cur = document.getElementById('ob-step' + _obCurrent);
-            if (cur) cur.classList.remove('active');
-            _obCurrent = step;
-            var next = document.getElementById('ob-step' + step);
-            if (next) next.classList.add('active');
-            _obUpdateDots(step);
-        }
-        function obShowGeminiSetup() {
-            var el = document.getElementById('ob-gemini-setup');
-            if (el) el.style.display = 'flex';
-            setTimeout(function() { var inp = document.getElementById('ob-gemini-key'); if (inp) inp.focus(); }, 100);
-        }
-        function obSaveGeminiAndNext() {
-            var inp = document.getElementById('ob-gemini-key');
+        };
+
+        window.obTestOllama = function() {
+            var st = document.getElementById('obOllamaStatus');
+            var tx = document.getElementById('obOllamaStatusText');
+            if (!st || !tx) return;
+            st.className = 'ob-status testing';
+            tx.textContent = 'Testing localhost:11434…';
+
+            fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(4000) })
+                .then(function(r) {
+                    if (r.ok) return r.json();
+                    throw new Error('HTTP ' + r.status);
+                })
+                .then(function(d) {
+                    var n = (d.models || []).length;
+                    st.className = 'ob-status ok';
+                    tx.textContent = '✓ Ollama connected — ' + n + ' model' + (n !== 1 ? 's' : '') + ' available';
+                    setTimeout(function(){ obGo(3); }, 1200);
+                })
+                .catch(function(e) {
+                    st.className = 'ob-status fail';
+                    tx.textContent = '✗ Not found — is Ollama running?';
+                });
+        };
+
+        window.obSaveGemini = function() {
+            var inp = document.getElementById('obGeminiKey');
             var key = inp ? inp.value.trim() : '';
-            if (key.length > 5) { vscode.postMessage({ type: 'setupGeminiKey', key: key }); }
-            obNext(4);
-        }
-        function obFinish() {
-            document.getElementById('onboardingOverlay').style.display = 'none';
+            if (!key || key.length < 10) {
+                var st = document.getElementById('obGeminiStatus');
+                var tx = document.getElementById('obGeminiStatusText');
+                if (st) st.className = 'ob-status fail';
+                if (tx) tx.textContent = '✗ Key looks too short — double-check it.';
+                return;
+            }
+
+            var st = document.getElementById('obGeminiStatus');
+            var tx = document.getElementById('obGeminiStatusText');
+            if (st) st.className = 'ob-status testing';
+            if (tx) tx.textContent = 'Validating key…';
+
+            fetch('https://generativelanguage.googleapis.com/v1beta/models?key=' + key, {
+                signal: AbortSignal.timeout(5000)
+            })
+            .then(function(r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function() {
+                if (st) st.className = 'ob-status ok';
+                if (tx) tx.textContent = '✓ Key valid — Gemini connected!';
+                vscode.postMessage({ type: 'setupGeminiKey', key: key });
+                setTimeout(function(){ obGo(4); }, 1000);
+            })
+            .catch(function() {
+                /* Save anyway even if ping fails (firewall/CSP) */
+                if (st) st.className = 'ob-status ok';
+                if (tx) tx.textContent = '✓ Key saved (connection test skipped)';
+                vscode.postMessage({ type: 'setupGeminiKey', key: key });
+                setTimeout(function(){ obGo(4); }, 1000);
+            });
+        };
+
+        window.obFinish = function() {
+            var overlay = document.getElementById('obOverlay');
+            if (overlay) {
+                overlay.style.transition = 'opacity 0.4s';
+                overlay.style.opacity = '0';
+                setTimeout(function(){ overlay.style.display = 'none'; }, 400);
+            }
             vscode.postMessage({ type: 'finishOnboarding' });
-            setTimeout(function() { vscode.postMessage({ type: 'getModels' }); }, 800);
-        }
+            setTimeout(function(){ vscode.postMessage({ type: 'getModels' }); }, 800);
+        };
+
+        (function initCanvas() {
+            var canvas = document.getElementById('obCanvas');
+            if (!canvas) return;
+            var ctx = canvas.getContext('2d');
+            var W, H, particles = [];
+
+            function resize() {
+                W = canvas.width  = canvas.offsetWidth;
+                H = canvas.height = canvas.offsetHeight;
+            }
+            resize();
+            window.addEventListener('resize', resize);
+
+            for (var i = 0; i < 80; i++) {
+                particles.push({
+                    x: Math.random() * 1600,
+                    y: Math.random() * 1200,
+                    r: Math.random() * 1.2 + 0.2,
+                    dx: (Math.random() - 0.5) * 0.12,
+                    dy: (Math.random() - 0.5) * 0.12,
+                    a: Math.random() * 0.5 + 0.1,
+                    da: (Math.random() - 0.5) * 0.004,
+                    hue: Math.random() < 0.6 ? 190 : 270,
+                });
+            }
+
+            var shooters = [];
+            function spawnShooter() {
+                shooters.push({
+                    x: Math.random() * W,
+                    y: 0,
+                    len: Math.random() * 60 + 30,
+                    speed: Math.random() * 3 + 2,
+                    angle: Math.PI / 4 + (Math.random() - 0.5) * 0.3,
+                    a: 0.7,
+                });
+            }
+            setInterval(spawnShooter, 2400);
+
+            function draw() {
+                ctx.clearRect(0, 0, W, H);
+
+                particles.forEach(function(p) {
+                    p.x += p.dx; p.y += p.dy; p.a += p.da;
+                    if (p.a < 0.05 || p.a > 0.65) p.da *= -1;
+                    if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
+                    if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                    ctx.fillStyle = 'hsla(' + p.hue + ',80%,80%,' + p.a + ')';
+                    ctx.fill();
+                });
+
+                shooters = shooters.filter(function(s) { return s.a > 0.01; });
+                shooters.forEach(function(s) {
+                    s.x += Math.cos(s.angle) * s.speed;
+                    s.y += Math.sin(s.angle) * s.speed;
+                    s.a -= 0.012;
+                    var grd = ctx.createLinearGradient(
+                        s.x, s.y,
+                        s.x - Math.cos(s.angle) * s.len,
+                        s.y - Math.sin(s.angle) * s.len
+                    );
+                    grd.addColorStop(0, 'rgba(0,210,255,' + s.a + ')');
+                    grd.addColorStop(1, 'rgba(0,210,255,0)');
+                    ctx.beginPath();
+                    ctx.moveTo(s.x, s.y);
+                    ctx.lineTo(s.x - Math.cos(s.angle) * s.len, s.y - Math.sin(s.angle) * s.len);
+                    ctx.strokeStyle = grd;
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                });
+
+                requestAnimationFrame(draw);
+            }
+            draw();
+        })();
+
         if (typeof _showOnboarding !== 'undefined' && _showOnboarding) {
-            document.getElementById('onboardingOverlay').style.display = 'flex';
+            document.getElementById('obOverlay').style.display = 'flex';
         }
+    })();
     </script>
 </body>
 </html>`;
