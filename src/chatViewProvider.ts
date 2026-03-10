@@ -2157,50 +2157,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     <p class="ob-desc">Pour utiliser l'IA <b>localement</b> — privé, gratuit, illimité — vous avez besoin d'<b>Ollama</b>, un runtime de modèles open-source.</p>
                     <div class="ob-tip">
                         <b>Qu'est-ce qu'Ollama ?</b><br>
-                        Un serveur local qui fait tourner des modèles IA (Llama 3, Mistral, Gemma…) directement sur votre machine. Aucune donnée ne quitte votre ordinateur.
+                        Un serveur local qui fait tourner des modèles IA (Llama 3, Mistral, Gemma…) directement sur votre machine. Aucune donnée ne quitte votre ordinateur.<br><br>
+                        ➜ <a href="https://ollama.com/download" target="_blank">ollama.com/download ↗</a> — macOS, Windows, Linux
                     </div>
-                    <p class="ob-desc" style="margin:0;">Avez-vous déjà <b>Ollama</b> installé ?</p>
+                    <div class="ob-screen-hint">
+                        💡 <b>Après installation</b>, ouvrez un terminal et lancez :<br>
+                        <code>ollama run llama3</code><br>
+                        Ollama démarrera son serveur sur <code>localhost:11434</code> — Antigravity le détectera automatiquement.
+                    </div>
+                    <p class="ob-desc" style="margin:0;">Avez-vous déjà <b>Ollama</b> installé (ou venez de l'installer) ?</p>
                     <div class="ob-options">
                         <button class="ob-btn primary" onclick="obNext(2)">✅ Oui, installé</button>
-                        <button class="ob-btn" onclick="obShowOllamaInstall()">⬇️ Non, installer</button>
-                    </div>
-                    <div id="ob-ollama-install" style="display:none; flex-direction:column; gap:10px;">
-                        <div class="ob-tip">
-                            <b>Télécharger Ollama :</b><br>
-                            ➜ <a href="https://ollama.com/download" target="_blank">ollama.com/download ↗</a><br>
-                            Disponible sur macOS, Windows et Linux. Installation en 1 clic.
-                        </div>
-                        <div class="ob-screen-hint">
-                            💡 <b>Après installation</b>, ouvrez un terminal et lancez :<br>
-                            <code>ollama run llama3</code><br>
-                            Ollama démarrera son serveur sur <code>localhost:11434</code> — Antigravity le détectera automatiquement.
-                        </div>
-                        <button class="ob-btn primary" onclick="obNext(2)">J'ai installé Ollama →</button>
+                        <button class="ob-btn" onclick="obNext(2)">⏭️ Non, passer</button>
                     </div>
                 </div>
 
                 <div class="ob-step" id="ob-step2">
                     <p class="ob-desc">Préférez-vous une interface graphique ? <b>LM Studio</b> permet de gérer et lancer des modèles locaux facilement, sans ligne de commande.</p>
                     <div class="ob-tip">
-                        LM Studio expose une API compatible OpenAI sur <code style="color:#00d2ff;background:rgba(0,210,255,0.1);padding:1px 5px;border-radius:4px;font-family:'Fira Code',monospace;">localhost:1234</code> — Antigravity la détecte automatiquement.
+                        LM Studio expose une API compatible OpenAI sur <code style="color:#00d2ff;background:rgba(0,210,255,0.1);padding:1px 5px;border-radius:4px;font-family:'Fira Code',monospace;">localhost:1234</code> — Antigravity la détecte automatiquement.<br><br>
+                        ➜ <a href="https://lmstudio.ai/" target="_blank">lmstudio.ai ↗</a> — macOS, Windows, Linux
                     </div>
-                    <p class="ob-desc" style="margin:0;">Utilisez-vous <b>LM Studio</b> ?</p>
+                    <div class="ob-screen-hint">
+                        💡 <b>Activer le serveur dans LM Studio :</b><br>
+                        1. Ouvrez LM Studio<br>
+                        2. Cliquez sur l'onglet <code>Local Server</code> (icône ↔️ à gauche)<br>
+                        3. Choisissez un modèle, cliquez sur <code>Start Server</code><br>
+                        Antigravity détectera le serveur et listera vos modèles.
+                    </div>
+                    <p class="ob-desc" style="margin:0;">Utilisez-vous (ou souhaitez-vous utiliser) <b>LM Studio</b> ?</p>
                     <div class="ob-options">
-                        <button class="ob-btn primary" onclick="obShowLmStudioHelp()">✅ Oui</button>
-                        <button class="ob-btn" onclick="obNext(3)">Non, passer →</button>
-                    </div>
-                    <div id="ob-lmstudio-help" style="display:none; flex-direction:column; gap:10px;">
-                        <div class="ob-tip">
-                            Pas encore installé ? ➜ <a href="https://lmstudio.ai/" target="_blank">lmstudio.ai ↗</a>
-                        </div>
-                        <div class="ob-screen-hint">
-                            💡 <b>Activer le serveur dans LM Studio :</b><br>
-                            1. Ouvrez LM Studio<br>
-                            2. Cliquez sur l'onglet <code>Local Server</code> (icône ↔️ à gauche)<br>
-                            3. Choisissez un modèle, cliquez sur <code>Start Server</code><br>
-                            Antigravity détectera le serveur et listera vos modèles.
-                        </div>
-                        <button class="ob-btn primary" onclick="obNext(3)">Continuer →</button>
+                        <button class="ob-btn primary" onclick="obNext(3)">✅ Oui</button>
+                        <button class="ob-btn" onclick="obNext(3)">⏭️ Non, passer</button>
                     </div>
                 </div>
 
@@ -2265,14 +2253,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             var next = document.getElementById('ob-step' + step);
             if (next) next.classList.add('active');
             _obUpdateDots(step);
-        }
-        function obShowOllamaInstall() {
-            var el = document.getElementById('ob-ollama-install');
-            if (el) el.style.display = 'flex';
-        }
-        function obShowLmStudioHelp() {
-            var el = document.getElementById('ob-lmstudio-help');
-            if (el) el.style.display = 'flex';
         }
         function obShowGeminiSetup() {
             var el = document.getElementById('ob-gemini-setup');
