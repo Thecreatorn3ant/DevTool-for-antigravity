@@ -40,6 +40,41 @@
         "command": "local-ai.toggleInlineCompletion",
         "title": "Antigravity: Basculer la complétion en ligne",
         "icon": "$(zap)"
+      },
+      {
+        "command": "local-ai.resetChat",
+        "title": "🔄 Réinitialiser le Chat",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.configureModel",
+        "title": "⚙️ Configurer un Modèle",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.exportSession",
+        "title": "💾 Exporter la Session",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.importSession",
+        "title": "📥 Importer une Session",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.createTemplate",
+        "title": "➕ Créer un Template Custom",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.showModelInfo",
+        "title": "ℹ️ Informations du Modèle",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.resetModelConfig",
+        "title": "🔧 Réinitialiser Config Modèle",
+        "category": "Local AI"
       }
     ],
     "viewsContainers": {
