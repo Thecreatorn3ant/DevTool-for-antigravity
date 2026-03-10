@@ -5,6 +5,7 @@ import { OllamaClient, ContextFile, ApiKeyStatus, estimateTokens, AttachedImage 
 import { FileContextManager } from './fileContextManager';
 import { LspDiagnosticsManager } from './lspDiagnosticsManager';
 import { AgentRunner, AgentSession } from './agentRunner';
+import { CommitManager } from './commitManager';
 
 interface ChatMessage {
     role: 'user' | 'ai';
@@ -206,6 +207,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private static _providerRegistered = false;
     private _lspManager: LspDiagnosticsManager;
     private _agentRunner: AgentRunner;
+    private _commitManager: CommitManager;
     private _agentSession: AgentSession | null = null;
     private _lspWatchActive: boolean = false;
 
@@ -218,6 +220,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._terminalPermission = this._context.workspaceState.get<'ask-all' | 'ask-important' | 'allow-all'>('terminalPermission', 'ask-important');
         this._lspManager = new LspDiagnosticsManager(this._context);
         this._agentRunner = new AgentRunner(this._ollamaClient, this._fileCtxManager, this._lspManager, this._context);
+        this._commitManager = new CommitManager(this._ollamaClient, this._fileCtxManager);
         if (!ChatViewProvider._providerRegistered) {
             this._context.subscriptions.push(
                 vscode.workspace.registerTextDocumentContentProvider(
@@ -1234,14 +1237,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleGenerateCommitMessage() {
-        const diff = await this._fileCtxManager.getStagedDiffForCommit();
-        if (!diff) {
-            vscode.window.showWarningMessage('Aucun fichier stagé. Faites d\'abord un `git add`.');
-            return;
-        }
-        this.sendMessageFromEditor(
-            `Génère un message de commit conventionnel (feat/fix/refactor/chore/docs/test) pour ce diff stagé. Réponds UNIQUEMENT avec le message de commit, sans explications :\n\`\`\`diff\n${diff.substring(0, 6000)}\n\`\`\``
-        );
+        await this._commitManager.generateAndShowCommitUI();
     }
 
     private async _handleReviewDiff() {

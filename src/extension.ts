@@ -3,6 +3,7 @@ import { OllamaClient } from './ollamaClient';
 import { ChatViewProvider } from './chatViewProvider';
 import { FileContextManager } from './fileContextManager';
 import { InlineCompletionProvider } from './inlineCompletionProvider';
+import { CommitManager } from './commitManager';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('[Antigravity] Extension activée');
@@ -17,6 +18,7 @@ export function activate(context: vscode.ExtensionContext) {
     const fileCtxManager = new FileContextManager(context);
     const chatProvider = new ChatViewProvider(context, ollamaClient, fileCtxManager);
     const inlineCompletionProvider = new InlineCompletionProvider(ollamaClient);
+    const commitManager = new CommitManager(ollamaClient, fileCtxManager);
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
@@ -74,17 +76,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('local-ai.generateCommitMessage', async () => {
-            const diff = await fileCtxManager.getStagedDiffForCommit();
-            if (!diff) {
-                vscode.window.showWarningMessage('Aucun fichier stagé. Faites d\'abord un `git add`.');
-                return;
-            }
-            vscode.commands.executeCommand('local-ai.chatView.focus');
-            setTimeout(() => {
-                chatProvider.sendMessageFromEditor(
-                    `Génère un message de commit conventionnel (feat/fix/refactor/...) pour ce diff stagé. Réponds UNIQUEMENT avec le message de commit, rien d'autre :\n\`\`\`diff\n${diff.substring(0, 6000)}\n\`\`\``
-                );
-            }, 300);
+            await commitManager.generateAndShowCommitUI();
         })
     );
 
