@@ -2101,29 +2101,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             font-family: 'Inter', sans-serif;
         }
         .ob-header {
-            padding: 22px 24px 18px;
+            padding: 14px 18px 12px;
             border-bottom: 1px solid rgba(255,255,255,0.07);
             background: linear-gradient(135deg, rgba(0,210,255,0.06) 0%, rgba(120,0,255,0.04) 100%);
         }
-        .ob-brand { font-size: 11px; font-weight: 800; letter-spacing: 3px; color: rgba(0,210,255,0.5); text-transform: uppercase; margin-bottom: 6px; }
-        .ob-title { font-size: 20px; font-weight: 900; color: #fff; line-height: 1.2; margin: 0; }
-        .ob-subtitle { font-size: 12px; color: #666; margin-top: 4px; }
-        .ob-progress { display: flex; gap: 6px; padding: 14px 24px 0; }
+        .ob-brand { font-size: 10px; font-weight: 800; letter-spacing: 3px; color: rgba(0,210,255,0.5); text-transform: uppercase; margin-bottom: 4px; }
+        .ob-title { font-size: 17px; font-weight: 900; color: #fff; line-height: 1.2; margin: 0; }
+        .ob-subtitle { font-size: 11px; color: #666; margin-top: 3px; }
+        .ob-progress { display: flex; gap: 6px; padding: 10px 18px 0; }
         .ob-dot { height: 3px; border-radius: 2px; flex: 1; background: rgba(255,255,255,0.1); transition: background 0.4s ease; }
         .ob-dot.active { background: #00d2ff; }
         .ob-dot.done   { background: rgba(0,210,255,0.35); }
-        .ob-body { padding: 20px 24px 24px; }
-        .ob-step { display: none; flex-direction: column; gap: 16px; }
+        .ob-body { padding: 14px 18px 18px; }
+        .ob-step { display: none; flex-direction: column; gap: 10px; }
         .ob-step.active { display: flex; }
-        .ob-desc { font-size: 13px; color: #aaa; line-height: 1.6; margin: 0; }
+        .ob-desc { font-size: 12px; color: #aaa; line-height: 1.5; margin: 0; }
         .ob-options { display: flex; gap: 10px; }
-        .ob-btn { flex: 1; padding: 12px 8px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: #ccc; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: 'Inter', sans-serif; text-align: center; }
+        .ob-btn { flex: 1; padding: 10px 8px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: #ccc; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: 'Inter', sans-serif; text-align: center; }
         .ob-btn:hover { background: rgba(255,255,255,0.09); color: #fff; border-color: rgba(255,255,255,0.2); }
         .ob-btn.primary { background: rgba(0,210,255,0.12); border-color: rgba(0,210,255,0.35); color: #00d2ff; }
         .ob-btn.primary:hover { background: rgba(0,210,255,0.22); border-color: rgba(0,210,255,0.6); }
         .ob-btn.purple { background: rgba(120,0,255,0.12); border-color: rgba(160,0,255,0.35); color: #cc88ff; }
         .ob-btn.purple:hover { background: rgba(120,0,255,0.22); border-color: rgba(160,0,255,0.6); }
-        .ob-tip { background: rgba(0,210,255,0.05); border: 1px solid rgba(0,210,255,0.15); border-radius: 10px; padding: 12px 14px; font-size: 12px; color: #888; line-height: 1.6; }
+        .ob-tip { background: rgba(0,210,255,0.05); border: 1px solid rgba(0,210,255,0.15); border-radius: 10px; padding: 10px 12px; font-size: 11px; color: #888; line-height: 1.5; }
         .ob-tip b { color: #00d2ff; }
         .ob-tip a { color: #00d2ff; text-decoration: none; font-weight: 700; }
         .ob-tip a:hover { text-decoration: underline; }
@@ -2154,41 +2154,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             <div class="ob-body">
 
                 <div class="ob-step active" id="ob-step1">
-                    <p class="ob-desc">Pour utiliser l'IA <b>localement</b> — privé, gratuit, illimité — vous avez besoin d'<b>Ollama</b>, un runtime de modèles open-source.</p>
-                    <div class="ob-tip">
-                        <b>Qu'est-ce qu'Ollama ?</b><br>
-                        Un serveur local qui fait tourner des modèles IA (Llama 3, Mistral, Gemma…) directement sur votre machine. Aucune donnée ne quitte votre ordinateur.<br><br>
-                        ➜ <a href="https://ollama.com/download" target="_blank">ollama.com/download ↗</a> — macOS, Windows, Linux
+                    <div class="ob-tip" style="font-size:11px; line-height:1.5;">
+                        <b>Ollama</b> — modèles IA locaux, privés et gratuits.<br>
+                        ➜ <a href="https://ollama.com/download" target="_blank">ollama.com/download ↗</a><br>
+                        Puis dans un terminal : <code>ollama run llama3</code><br>
+                        <span style="color:#555;">Serveur auto-détecté sur <code style="color:#555;">localhost:11434</code></span>
                     </div>
-                    <div class="ob-screen-hint">
-                        💡 <b>Après installation</b>, ouvrez un terminal et lancez :<br>
-                        <code>ollama run llama3</code><br>
-                        Ollama démarrera son serveur sur <code>localhost:11434</code> — Antigravity le détectera automatiquement.
-                    </div>
-                    <p class="ob-desc" style="margin:0;">Avez-vous déjà <b>Ollama</b> installé (ou venez de l'installer) ?</p>
+                    <p class="ob-desc" style="margin:0; font-size:12px;">Ollama est-il installé sur votre machine ?</p>
                     <div class="ob-options">
-                        <button class="ob-btn primary" onclick="obNext(2)">✅ Oui, installé</button>
-                        <button class="ob-btn" onclick="obNext(2)">⏭️ Non, passer</button>
+                        <button class="ob-btn primary" onclick="obNext(2)">✅ Oui</button>
+                        <button class="ob-btn" onclick="obNext(2)">⏭️ Non / Passer</button>
                     </div>
                 </div>
 
                 <div class="ob-step" id="ob-step2">
-                    <p class="ob-desc">Préférez-vous une interface graphique ? <b>LM Studio</b> permet de gérer et lancer des modèles locaux facilement, sans ligne de commande.</p>
-                    <div class="ob-tip">
-                        LM Studio expose une API compatible OpenAI sur <code style="color:#00d2ff;background:rgba(0,210,255,0.1);padding:1px 5px;border-radius:4px;font-family:'Fira Code',monospace;">localhost:1234</code> — Antigravity la détecte automatiquement.<br><br>
-                        ➜ <a href="https://lmstudio.ai/" target="_blank">lmstudio.ai ↗</a> — macOS, Windows, Linux
+                    <div class="ob-tip" style="font-size:11px; line-height:1.5;">
+                        <b>LM Studio</b> — interface graphique pour modèles locaux.<br>
+                        ➜ <a href="https://lmstudio.ai/" target="_blank">lmstudio.ai ↗</a><br>
+                        API auto-détectée sur <code>localhost:1234</code><br>
+                        <span style="color:#555;">Onglet <code style="color:#555;">Local Server</code> → Start Server</span>
                     </div>
-                    <div class="ob-screen-hint">
-                        💡 <b>Activer le serveur dans LM Studio :</b><br>
-                        1. Ouvrez LM Studio<br>
-                        2. Cliquez sur l'onglet <code>Local Server</code> (icône ↔️ à gauche)<br>
-                        3. Choisissez un modèle, cliquez sur <code>Start Server</code><br>
-                        Antigravity détectera le serveur et listera vos modèles.
-                    </div>
-                    <p class="ob-desc" style="margin:0;">Utilisez-vous (ou souhaitez-vous utiliser) <b>LM Studio</b> ?</p>
+                    <p class="ob-desc" style="margin:0; font-size:12px;">Utilisez-vous LM Studio ?</p>
                     <div class="ob-options">
                         <button class="ob-btn primary" onclick="obNext(3)">✅ Oui</button>
-                        <button class="ob-btn" onclick="obNext(3)">⏭️ Non, passer</button>
+                        <button class="ob-btn" onclick="obNext(3)">⏭️ Non / Passer</button>
                     </div>
                 </div>
 
