@@ -1778,7 +1778,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             "document.getElementById('btnRelatedFiles').onclick = function() { vscode.postMessage({ type: 'addRelatedFiles' }); };",
             "document.getElementById('btnThink').onclick = function() { vscode.postMessage({ type: 'toggleThinkMode' }); };",
             "document.getElementById('btnCloud').onclick = function() { vscode.postMessage({ type: 'openCloudConnect' }); };",
-            "document.getElementById('btnOnboarding').onclick = function() { obOpen(); };",
             "document.getElementById('btnClearHistory').onclick = function() { if (confirm('Effacer l\\'historique ?')) { vscode.postMessage({ type: 'clearHistory' }); chat.innerHTML = ''; } };",
             "document.getElementById('btnReset').onclick = function() { vscode.postMessage({ type: 'resetChat' }); };",
             "document.getElementById('btnLsp').onclick = function() { vscode.postMessage({ type: 'getLspDiagnostics', scope: 'workspace' }); };",
@@ -2074,7 +2073,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         <span class="header-brand">ANTIGRAVITY</span>
         <div class="header-controls">
             <button class="btn-cloud" id="btnCloud">☁️ Cloud</button>
-            <button class="btn-cloud" id="btnOnboarding" title="Revoir le guide de démarrage" style="padding:4px 8px;">🛸</button>
+            <button class="btn-cloud" id="btnOnboarding" onclick="if(typeof obOpen==='function'){obOpen();}else{document.getElementById('obOverlay').style.opacity='0';document.getElementById('obOverlay').style.display='flex';setTimeout(function(){document.getElementById('obOverlay').style.transition='opacity 0.4s';document.getElementById('obOverlay').style.opacity='1';},20);}" title="Revoir le guide de démarrage" style="padding:4px 8px;">🛸</button>
             <div id="modelComboWrap">
                 <div id="modelComboBox">
                     <input id="modelSearch" type="text" placeholder="Modèle…" autocomplete="off" spellcheck="false">
@@ -2416,7 +2415,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         <span class="ob-brand-tag">Antigravity IDE</span>
                         <span class="ob-step-label" id="obStepLabel">step 1 / 5</span>
                     </div>
-                    <button id="obCloseBtn" onclick="obSkip()" title="Fermer et revenir au chat" style="margin-left:auto;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#555;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all 0.2s;flex-shrink:0;">✕</button>
+                    <button id="obCloseBtn" onclick="obSkip()" title="Fermer et revenir au chat" style="margin-left:auto;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#666;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all 0.2s;flex-shrink:0;font-family:'Inter',sans-serif;" onmouseover="this.style.background='rgba(255,80,80,0.15)';this.style.color='#ff8888';this.style.borderColor='rgba(255,80,80,0.3)';" onmouseout="this.style.background='rgba(255,255,255,0.05)';this.style.color='#666';this.style.borderColor='rgba(255,255,255,0.1)';">✕</button>
                 </div>
                 <h2 class="ob-title" id="obMainTitle">Mission Briefing</h2>
                 <p class="ob-sub" id="obMainSub">Configure your AI co-pilot in 60 seconds.</p>
