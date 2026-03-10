@@ -1944,7 +1944,81 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             "vscode.postMessage({ type: 'getTerminalPermission' });",
             "var _currentLspFormatted = '';",
             "var _agentRunning = false;",
-            `var _showOnboarding = ${showOnboarding};`
+            `var _showOnboarding = ${showOnboarding};`,
+            "",
+            "// ===== ONBOARDING FUNCTIONS (need vscode in scope) =====",
+            "var _obCur = 1;",
+            "var _obTitles = {",
+            "    1: ['Mission Briefing', 'Configure your AI co-pilot in 60 seconds.'],",
+            "    2: ['Local AI Setup', 'Private, offline, completely free.'],",
+            "    3: ['Cloud Boost', 'Optional — supercharge with Gemini\\'s free tier.'],",
+            "    4: ['The Cockpit', 'A quick tour before you launch.'],",
+            "    5: ['All Systems Go', 'Your AI-powered IDE is ready.']",
+            "};",
+            "function obGo(step) {",
+            "    var prev = document.getElementById('obStep' + _obCur);",
+            "    if (prev) prev.classList.remove('active');",
+            "    _obCur = step;",
+            "    var next = document.getElementById('obStep' + step);",
+            "    if (next) next.classList.add('active');",
+            "    var t = _obTitles[step] || ['', ''];",
+            "    var el = document.getElementById('obMainTitle');",
+            "    var sub = document.getElementById('obMainSub');",
+            "    var lbl = document.getElementById('obStepLabel');",
+            "    if (el) { el.style.opacity='0'; setTimeout(function(){ el.textContent=t[0]; el.style.opacity='1'; el.style.transition='opacity 0.25s'; },120); }",
+            "    if (sub) { sub.style.opacity='0'; setTimeout(function(){ sub.textContent=t[1]; sub.style.opacity='1'; sub.style.transition='opacity 0.25s'; },180); }",
+            "    if (lbl) lbl.textContent = 'step ' + step + ' / 5';",
+            "    for (var i=1; i<=5; i++) {",
+            "        var seg = document.getElementById('obSeg'+i);",
+            "        if (seg) seg.className = 'ob-seg' + (i<step?' done':i===step?' active':'');",
+            "    }",
+            "}",
+            "function obSkip() {",
+            "    var o = document.getElementById('obOverlay');",
+            "    if (!o) return;",
+            "    o.style.transition = 'opacity 0.4s';",
+            "    o.style.opacity = '0';",
+            "    setTimeout(function(){ o.style.display='none'; o.style.opacity='1'; o.style.transition=''; }, 400);",
+            "}",
+            "function obOpen() {",
+            "    var o = document.getElementById('obOverlay');",
+            "    if (!o) return;",
+            "    obGo(1);",
+            "    o.style.transition = '';",
+            "    o.style.opacity = '0';",
+            "    o.style.display = 'flex';",
+            "    setTimeout(function(){ o.style.transition='opacity 0.4s'; o.style.opacity='1'; }, 20);",
+            "}",
+            "function obFinish() {",
+            "    var o = document.getElementById('obOverlay');",
+            "    if (o) { o.style.transition='opacity 0.4s'; o.style.opacity='0'; setTimeout(function(){ o.style.display='none'; },400); }",
+            "    vscode.postMessage({ type: 'finishOnboarding' });",
+            "    setTimeout(function(){ vscode.postMessage({ type: 'getModels' }); }, 800);",
+            "}",
+            "function obTestOllama() {",
+            "    var st = document.getElementById('obOllamaStatus');",
+            "    var tx = document.getElementById('obOllamaStatusText');",
+            "    if (!st||!tx) return;",
+            "    st.className='ob-status testing'; tx.textContent='Testing localhost:11434…';",
+            "    fetch('http://localhost:11434/api/tags',{signal:AbortSignal.timeout(4000)})",
+            "        .then(function(r){ if(r.ok) return r.json(); throw new Error('HTTP '+r.status); })",
+            "        .then(function(d){ var n=(d.models||[]).length; st.className='ob-status ok'; tx.textContent='✓ Ollama connected — '+n+' model'+(n!==1?'s':'')+' available'; setTimeout(function(){ obGo(3); },1200); })",
+            "        .catch(function(){ st.className='ob-status fail'; tx.textContent='✗ Not found — is Ollama running?'; });",
+            "}",
+            "function obSaveGemini() {",
+            "    var inp = document.getElementById('obGeminiKey');",
+            "    var key = inp ? inp.value.trim() : '';",
+            "    var st = document.getElementById('obGeminiStatus');",
+            "    var tx = document.getElementById('obGeminiStatusText');",
+            "    if (!key || key.length < 10) { if(st) st.className='ob-status fail'; if(tx) tx.textContent='✗ Key looks too short — double-check it.'; return; }",
+            "    if(st) st.className='ob-status testing'; if(tx) tx.textContent='Validating key…';",
+            "    fetch('https://generativelanguage.googleapis.com/v1beta/models?key='+key,{signal:AbortSignal.timeout(5000)})",
+            "        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })",
+            "        .then(function(){ if(st) st.className='ob-status ok'; if(tx) tx.textContent='✓ Key valid — Gemini connected!'; vscode.postMessage({type:'setupGeminiKey',key:key}); setTimeout(function(){ obGo(4); },1000); })",
+            "        .catch(function(){ if(st) st.className='ob-status ok'; if(tx) tx.textContent='✓ Key saved (connection test skipped)'; vscode.postMessage({type:'setupGeminiKey',key:key}); setTimeout(function(){ obGo(4); },1000); });",
+            "}",
+            "if (_showOnboarding) { document.getElementById('obOverlay').style.display = 'flex'; }",
+            "document.getElementById('btnOnboarding').onclick = function() { obOpen(); };"
         ].join("\n");
 
         return `<!DOCTYPE html>
@@ -2579,138 +2653,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     </div>
 
     <script>
-    (function() {
-        var _cur = 1;
-        var TOTAL = 5;
-
-        var TITLES = {
-            1: ['Mission Briefing',    'Configure your AI co-pilot in 60 seconds.'],
-            2: ['Local AI Setup',      'Private, offline, completely free.'],
-            3: ['Cloud Boost',         'Optional — supercharge with Gemini\'s free tier.'],
-            4: ['The Cockpit',         'A quick tour before you launch.'],
-            5: ['All Systems Go',      'Your AI-powered IDE is ready.'],
-        };
-
-        window.obGo = function(step) {
-            var prev = document.getElementById('obStep' + _cur);
-            if (prev) { prev.classList.remove('active'); }
-            _cur = step;
-            var next = document.getElementById('obStep' + step);
-            if (next) { next.classList.add('active'); }
-
-            var t = TITLES[step] || ['', ''];
-            var el = document.getElementById('obMainTitle');
-            var sub = document.getElementById('obMainSub');
-            var lbl = document.getElementById('obStepLabel');
-            if (el) { el.style.opacity = '0'; setTimeout(function(){ el.textContent = t[0]; el.style.opacity = '1'; el.style.transition = 'opacity 0.25s'; }, 120); }
-            if (sub) { sub.style.opacity = '0'; setTimeout(function(){ sub.textContent = t[1]; sub.style.opacity = '1'; sub.style.transition = 'opacity 0.25s'; }, 180); }
-            if (lbl) lbl.textContent = 'step ' + step + ' / ' + TOTAL;
-
-            for (var i = 1; i <= TOTAL; i++) {
-                var seg = document.getElementById('obSeg' + i);
-                if (!seg) continue;
-                seg.className = 'ob-seg' + (i < step ? ' done' : i === step ? ' active' : '');
-            }
-        };
-
-        window.obTestOllama = function() {
-            var st = document.getElementById('obOllamaStatus');
-            var tx = document.getElementById('obOllamaStatusText');
-            if (!st || !tx) return;
-            st.className = 'ob-status testing';
-            tx.textContent = 'Testing localhost:11434…';
-
-            fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(4000) })
-                .then(function(r) {
-                    if (r.ok) return r.json();
-                    throw new Error('HTTP ' + r.status);
-                })
-                .then(function(d) {
-                    var n = (d.models || []).length;
-                    st.className = 'ob-status ok';
-                    tx.textContent = '✓ Ollama connected — ' + n + ' model' + (n !== 1 ? 's' : '') + ' available';
-                    setTimeout(function(){ obGo(3); }, 1200);
-                })
-                .catch(function(e) {
-                    st.className = 'ob-status fail';
-                    tx.textContent = '✗ Not found — is Ollama running?';
-                });
-        };
-
-        window.obSaveGemini = function() {
-            var inp = document.getElementById('obGeminiKey');
-            var key = inp ? inp.value.trim() : '';
-            if (!key || key.length < 10) {
-                var st = document.getElementById('obGeminiStatus');
-                var tx = document.getElementById('obGeminiStatusText');
-                if (st) st.className = 'ob-status fail';
-                if (tx) tx.textContent = '✗ Key looks too short — double-check it.';
-                return;
-            }
-
-            var st = document.getElementById('obGeminiStatus');
-            var tx = document.getElementById('obGeminiStatusText');
-            if (st) st.className = 'ob-status testing';
-            if (tx) tx.textContent = 'Validating key…';
-
-            fetch('https://generativelanguage.googleapis.com/v1beta/models?key=' + key, {
-                signal: AbortSignal.timeout(5000)
-            })
-            .then(function(r) {
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.json();
-            })
-            .then(function() {
-                if (st) st.className = 'ob-status ok';
-                if (tx) tx.textContent = '✓ Key valid — Gemini connected!';
-                vscode.postMessage({ type: 'setupGeminiKey', key: key });
-                setTimeout(function(){ obGo(4); }, 1000);
-            })
-            .catch(function() {
-                /* Save anyway even if ping fails (firewall/CSP) */
-                if (st) st.className = 'ob-status ok';
-                if (tx) tx.textContent = '✓ Key saved (connection test skipped)';
-                vscode.postMessage({ type: 'setupGeminiKey', key: key });
-                setTimeout(function(){ obGo(4); }, 1000);
-            });
-        };
-
-        window.obFinish = function() {
-            vscode.postMessage({ type: 'finishOnboarding' });
-            setTimeout(function(){ vscode.postMessage({ type: 'getModels' }); }, 800);
-        };
-
-        if (typeof _showOnboarding !== 'undefined' && _showOnboarding) {
-            document.getElementById('obOverlay').style.display = 'flex';
-        }
-    })();
-    </script>
-
-    <script>
-        function obSkip() {
-            var o = document.getElementById('obOverlay');
-            if (!o) return;
-            o.style.transition = 'opacity 0.4s';
-            o.style.opacity = '0';
-            setTimeout(function(){ o.style.display = 'none'; o.style.opacity = '1'; o.style.transition = ''; }, 400);
-        }
-        function obOpen() {
-            var o = document.getElementById('obOverlay');
-            if (!o) return;
-            o.style.transition = '';
-            o.style.opacity = '0';
-            o.style.display = 'flex';
-            setTimeout(function(){ o.style.transition = 'opacity 0.4s'; o.style.opacity = '1'; }, 20);
-        }
-        function obFinish() {
-            var o = document.getElementById('obOverlay');
-            if (o) { o.style.transition = 'opacity 0.4s'; o.style.opacity = '0'; setTimeout(function(){ o.style.display = 'none'; }, 400); }
-            vscode.postMessage({ type: 'finishOnboarding' });
-            setTimeout(function(){ vscode.postMessage({ type: 'getModels' }); }, 800);
-        }
-    </script>
-
-    <script>
         (function initCanvas() {
             var canvas = document.getElementById('obCanvas');
             if (!canvas) return;
@@ -2752,7 +2694,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
             function draw() {
                 ctx.clearRect(0, 0, W, H);
-
                 particles.forEach(function(p) {
                     p.x += p.dx; p.y += p.dy; p.a += p.da;
                     if (p.a < 0.05 || p.a > 0.65) p.da *= -1;
@@ -2763,35 +2704,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     ctx.fillStyle = 'hsla(' + p.hue + ',80%,80%,' + p.a + ')';
                     ctx.fill();
                 });
-
                 shooters = shooters.filter(function(s) { return s.a > 0.01; });
                 shooters.forEach(function(s) {
                     s.x += Math.cos(s.angle) * s.speed;
                     s.y += Math.sin(s.angle) * s.speed;
                     s.a -= 0.012;
-                    var grd = ctx.createLinearGradient(
-                        s.x, s.y,
-                        s.x - Math.cos(s.angle) * s.len,
-                        s.y - Math.sin(s.angle) * s.len
-                    );
+                    var grd = ctx.createLinearGradient(s.x, s.y, s.x - Math.cos(s.angle)*s.len, s.y - Math.sin(s.angle)*s.len);
                     grd.addColorStop(0, 'rgba(0,210,255,' + s.a + ')');
                     grd.addColorStop(1, 'rgba(0,210,255,0)');
                     ctx.beginPath();
                     ctx.moveTo(s.x, s.y);
-                    ctx.lineTo(s.x - Math.cos(s.angle) * s.len, s.y - Math.sin(s.angle) * s.len);
+                    ctx.lineTo(s.x - Math.cos(s.angle)*s.len, s.y - Math.sin(s.angle)*s.len);
                     ctx.strokeStyle = grd;
                     ctx.lineWidth = 1.5;
                     ctx.stroke();
                 });
-
                 requestAnimationFrame(draw);
             }
             draw();
         })();
-
-        if (typeof _showOnboarding !== 'undefined' && _showOnboarding) {
-            document.getElementById('obOverlay').style.display = 'flex';
-        }
     </script>
 </body>
 </html>`;
