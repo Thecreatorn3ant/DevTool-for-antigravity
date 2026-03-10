@@ -15,10 +15,6 @@ export interface ModelConfig {
     userOverride?: boolean;
 }
 
-/**
- * Gestionnaire de configuration des modèles avec détection automatique
- * et support pour les modèles récents avec contextes étendus
- */
 export class ModelConfigManager {
     private _configs: Map<string, ModelConfig> = new Map();
     private _context: vscode.ExtensionContext;
@@ -29,25 +25,18 @@ export class ModelConfigManager {
         this._initializeDefaultConfigs();
     }
 
-    /**
-     * Détecte automatiquement la limite de contexte pour un modèle
-     */
     async detectContextLimit(modelName: string, baseUrl: string, apiKey?: string): Promise<number> {
         const name = modelName.toLowerCase();
 
-        // 1. Vérifier si une config utilisateur existe
         const userConfig = this._configs.get(modelName);
         if (userConfig?.userOverride) {
             return userConfig.contextLimit;
         }
 
-        // 2. Essayer de récupérer via l'API Ollama
         if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
             const ollamaLimit = await this._getOllamaContextLimit(modelName, baseUrl);
             if (ollamaLimit > 0) return ollamaLimit;
         }
-
-        // 3. Détection intelligente par patterns de noms
         return this._detectByModelName(name);
     }
 
@@ -77,20 +66,18 @@ export class ModelConfigManager {
     }
 
     private _detectByModelName(name: string): number {
-        // Modèles avec contexte ultra-long (1M+ tokens)
-        if (name.includes('gemini-2.0-flash-thinking') || 
+        if (name.includes('gemini-2.0-flash-thinking') ||
             name.includes('gemini-2.0-flash-exp') ||
             name.includes('gemini-exp-1206')) {
             return 1_000_000;
         }
 
-        if (name.includes('deepseek-v3') || 
+        if (name.includes('deepseek-v3') ||
             name.includes('deepseek-r1') ||
             name.includes('deepseek-coder-v2')) {
             return 131_072;
         }
 
-        // Claude via Ollama (bjoernb/claude-opus-4.5:latest)
         if (name.includes('claude-opus-4') || name.includes('claude-sonnet-4')) {
             return 200_000;
         }
@@ -101,7 +88,6 @@ export class ModelConfigManager {
             return 100_000;
         }
 
-        // Gemini Flash 2.0 et 1.5 Pro
         if (name.includes('gemini-2.0-flash') || name.includes('gemini-flash-2')) {
             return 1_000_000;
         }
@@ -112,7 +98,6 @@ export class ModelConfigManager {
             return 1_000_000;
         }
 
-        // Llama 3.3, 3.2, 3.1
         if (name.includes('llama-3.3') || name.includes('llama3.3')) {
             return 131_072;
         }
@@ -123,7 +108,6 @@ export class ModelConfigManager {
             return 131_072;
         }
 
-        // Qwen 2.5 Coder (contexte massif)
         if (name.includes('qwen2.5-coder') || name.includes('qwen-2.5-coder')) {
             return 131_072;
         }
@@ -131,7 +115,6 @@ export class ModelConfigManager {
             return 131_072;
         }
 
-        // Ministral et Mistral Nemo
         if (name.includes('ministral')) {
             return 131_072;
         }
@@ -145,7 +128,6 @@ export class ModelConfigManager {
             return 32_768;
         }
 
-        // Command-R et Granite
         if (name.includes('command-r')) {
             return 131_072;
         }
@@ -153,7 +135,6 @@ export class ModelConfigManager {
             return 131_072;
         }
 
-        // Phi 4
         if (name.includes('phi-4') || name.includes('phi4')) {
             return 16_384;
         }
@@ -161,7 +142,6 @@ export class ModelConfigManager {
             return 16_384;
         }
 
-        // Gemma 3
         if (name.includes('gemma3')) {
             return 131_072;
         }
@@ -169,17 +149,13 @@ export class ModelConfigManager {
             return 8_192;
         }
 
-        // CodeLlama
         if (name.includes('codellama') || name.includes('code-llama')) {
             return 16_384;
         }
-
-        // StarCoder2
         if (name.includes('starcoder2') || name.includes('starcoder-2')) {
             return 16_384;
         }
 
-        // Modèles vision
         if (name.includes('llava-llama3')) {
             return 131_072;
         }
@@ -187,14 +163,10 @@ export class ModelConfigManager {
             return 4_096;
         }
 
-        // Valeur par défaut conservative
         console.warn(`[ModelConfig] Modèle inconnu "${name}", utilisation de 8192 tokens par défaut`);
         return 8_192;
     }
 
-    /**
-     * Permet à l'utilisateur de configurer manuellement un modèle
-     */
     async configureModel(modelName: string): Promise<void> {
         const currentConfig = this._configs.get(modelName) || {
             name: modelName,
@@ -240,12 +212,9 @@ export class ModelConfigManager {
         );
     }
 
-    /**
-     * Obtient la config d'un modèle (détection auto si inexistante)
-     */
     async getConfig(modelName: string, baseUrl: string, apiKey?: string): Promise<ModelConfig> {
         let config = this._configs.get(modelName);
-        
+
         if (!config) {
             const contextLimit = await this.detectContextLimit(modelName, baseUrl, apiKey);
             config = {
@@ -263,8 +232,7 @@ export class ModelConfigManager {
 
     getMaxChars(modelName: string): number {
         const config = this._configs.get(modelName);
-        if (!config) return 32_000; // fallback
-        // Ratio conservateur : 1 token ≈ 4 chars
+        if (!config) return 32_000;
         return config.contextLimit * 4;
     }
 
@@ -280,21 +248,20 @@ export class ModelConfigManager {
     private _detectCapabilities(modelName: string): ModelConfig['capabilities'] {
         const name = modelName.toLowerCase();
         return {
-            vision: name.includes('vision') || 
-                    name.includes('llava') || 
-                    name.includes('gemini') ||
-                    name.includes('claude') ||
-                    name.includes('gpt-4'),
-            functionCalling: name.includes('gpt-4') || 
-                            name.includes('claude') ||
-                            name.includes('gemini') ||
-                            name.includes('mistral'),
-            streaming: true, // Presque tous les modèles supportent le streaming
+            vision: name.includes('vision') ||
+                name.includes('llava') ||
+                name.includes('gemini') ||
+                name.includes('claude') ||
+                name.includes('gpt-4'),
+            functionCalling: name.includes('gpt-4') ||
+                name.includes('claude') ||
+                name.includes('gemini') ||
+                name.includes('mistral'),
+            streaming: true,
         };
     }
 
     private _initializeDefaultConfigs(): void {
-        // Pré-charger les configs pour les modèles populaires
         const defaults: Array<[string, number]> = [
             ['deepseek-r1:latest', 131_072],
             ['deepseek-v3:latest', 131_072],

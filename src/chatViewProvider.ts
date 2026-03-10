@@ -5,6 +5,7 @@ import { OllamaClient, ContextFile, ApiKeyStatus, estimateTokens, AttachedImage 
 import { FileContextManager } from './fileContextManager';
 import { LspDiagnosticsManager } from './lspDiagnosticsManager';
 import { AgentRunner, AgentSession } from './agentRunner';
+import { ChatSessionManager, PromptTemplate } from './chatSessionManager';
 
 interface ChatMessage {
     role: 'user' | 'ai';
@@ -208,12 +209,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _agentRunner: AgentRunner;
     private _agentSession: AgentSession | null = null;
     private _lspWatchActive: boolean = false;
+    private _sessionManager: ChatSessionManager;
 
     constructor(
         private readonly _context: vscode.ExtensionContext,
         private readonly _ollamaClient: OllamaClient,
         private readonly _fileCtxManager: FileContextManager,
+        sessionManager: ChatSessionManager,
     ) {
+        this._sessionManager = sessionManager;
         this._history = this._context.workspaceState.get<ChatMessage[]>('chatHistory', []);
         this._terminalPermission = this._context.workspaceState.get<'ask-all' | 'ask-important' | 'allow-all'>('terminalPermission', 'ask-important');
         this._lspManager = new LspDiagnosticsManager(this._context);
@@ -371,6 +375,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     this._agentRunner.stop();
                     this._view?.webview.postMessage({ type: 'agentStopped' });
                     break;
+                case 'resetChat': {
+                    const result = await this._sessionManager.promptForReset();
+                    if (result.reset) {
+                        await this.resetChat(result.template);
+                    }
+                    break;
+                }
+                case 'showModelInfo':
+                    vscode.commands.executeCommand('local-ai.showModelInfo');
+                    break;
             }
         });
     }
@@ -403,6 +417,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     public async runAgentFromCommand(goal: string) {
         await this._handleRunAgent(goal);
+    }
+
+    public async resetChat(template?: PromptTemplate): Promise<void> {
+        const config = vscode.workspace.getConfiguration('local-ai');
+        const model = config.get<string>('defaultModel', 'llama3');
+
+        const session = await this._sessionManager.createNewSession(
+            model,
+            template?.systemPrompt
+        );
+
+        this._history = [];
+        this._updateHistory();
+
+        this._view?.webview.postMessage({
+            type: 'reset',
+            sessionTitle: session.title,
+            templateName: template?.name
+        });
+
+        if (template?.initialMessage) {
+            setTimeout(() => {
+                this.sendMessageFromEditor(template.initialMessage!);
+            }, 300);
+        }
+
+        vscode.window.showInformationMessage(
+            template
+                ? `🔄 Chat réinitialisé avec template "${template.name}"`
+                : '🔄 Nouveau chat créé'
+        );
     }
 
     public async analyzeError(errorText: string) {
@@ -510,6 +555,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         this._history.push({ role: 'user', value: userMsg });
         this._updateHistory();
+        this._sessionManager.addMessage('user', userMsg);
 
         if (this._currentAbortController) {
             this._currentAbortController.abort();
@@ -543,6 +589,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
             this._history.push({ role: 'ai', value: fullRes });
             this._updateHistory();
+            this._sessionManager.addMessage('assistant', fullRes);
             this._view.webview.postMessage({ type: 'endResponse', value: fullRes });
             this._sendTokenBudget();
 
@@ -1732,6 +1779,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             "document.getElementById('btnThink').onclick = function() { vscode.postMessage({ type: 'toggleThinkMode' }); };",
             "document.getElementById('btnCloud').onclick = function() { vscode.postMessage({ type: 'openCloudConnect' }); };",
             "document.getElementById('btnClearHistory').onclick = function() { if (confirm('Effacer l\\'historique ?')) { vscode.postMessage({ type: 'clearHistory' }); chat.innerHTML = ''; } };",
+            "document.getElementById('btnReset').onclick = function() { vscode.postMessage({ type: 'resetChat' }); };",
             "document.getElementById('btnLsp').onclick = function() { vscode.postMessage({ type: 'getLspDiagnostics', scope: 'workspace' }); };",
             "var _lspWatchActive = false;",
             "document.getElementById('btnLspWatch').onclick = function() { vscode.postMessage({ type: 'toggleLspWatch' }); };",
@@ -1882,6 +1930,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             "            }",
             "        });",
             "        renderFilesBar();",
+            "    }",
+            "    if (m.type === 'reset') {",
+            "        chat.innerHTML = ''; _msgCounter = 0;",
+            "        contextFiles = []; renderFilesBar();",
+            "        showNotification(m.templateName ? '🔄 Chat réinitialisé avec \"' + m.templateName + '\"' : '🔄 Nouveau chat créé', 'success');",
             "    }",
             "});",
             "",
@@ -2066,6 +2119,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             <button class="btn-action" id="btnCommit" title="Générer un message de commit">💾 Commit</button>
             <button class="btn-action" id="btnTests" title="Générer les tests du fichier actif">🧪 Tests</button>
             <button class="btn-action" id="btnClearHistory" title="Effacer l'historique">🗑 Vider</button>
+            <button class="btn-action" id="btnReset" title="Nouveau chat / Reset">🔄 Reset</button>
             <button class="btn-action" id="btnLsp" title="Analyser les erreurs LSP">🔴 LSP</button>
             <button class="btn-action" id="btnLspWatch" title="Surveiller les erreurs en temps réel">👁 Veille</button>
             <button class="btn-action" id="btnAgent" title="Lancer l'agent autonome IA">🤖 Agent</button>

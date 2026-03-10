@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ProviderRouter, TaskType, FREE_MODELS } from './providerRouter';
 import { SecretKeyStore } from './secretKeyStore';
+import { ModelConfigManager } from './modelConfigManager';
 
 import {
     isLocalUrl,
@@ -220,9 +221,11 @@ export class OllamaClient {
     readonly router: ProviderRouter;
     private _secretStore?: SecretKeyStore;
     private _secretStoreReady = false;
+    private _modelConfigManager?: ModelConfigManager;
 
-    constructor() {
+    constructor(modelConfigManager?: ModelConfigManager) {
         this.router = new ProviderRouter();
+        this._modelConfigManager = modelConfigManager;
         this.router.registerProvider('http://localhost:11434', 'Ollama Local', 'local');
         const lmStudioUrl = this._getLmStudioUrl();
         this.router.registerProvider(lmStudioUrl, 'LM Studio', 'lmstudio');
@@ -435,7 +438,12 @@ export class OllamaClient {
             const limit = getCloudModelLimit(model, provider);
             return { used: 0, max: limit * 4, isCloud: true };
         }
-        const tokens = await getLocalContextSize(model, targetUrl || this._getBaseUrl());
+        const url = targetUrl || this._getBaseUrl();
+        if (this._modelConfigManager) {
+            const config = await this._modelConfigManager.getConfig(model, url);
+            return { used: 0, max: config.contextLimit * 4, isCloud: false };
+        }
+        const tokens = await getLocalContextSize(model, url);
         return { used: 0, max: tokens * 4, isCloud: false };
     }
 

@@ -4,11 +4,16 @@ import { ChatViewProvider } from './chatViewProvider';
 import { FileContextManager } from './fileContextManager';
 import { InlineCompletionProvider } from './inlineCompletionProvider';
 import { CommitManager } from './commitManager';
+import { ModelConfigManager } from './modelConfigManager';
+import { ChatSessionManager } from './chatSessionManager';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('[Antigravity] Extension activée');
 
-    const ollamaClient = new OllamaClient();
+    const modelConfigManager = new ModelConfigManager(context);
+    const sessionManager = new ChatSessionManager(context);
+
+    const ollamaClient = new OllamaClient(modelConfigManager);
     ollamaClient.initSecretStore(context.secrets).then(migrated => {
         if (migrated > 0) {
             vscode.window.showInformationMessage(`✅ ${migrated} clé(s) API sécurisée(s) avec succès.`);
@@ -16,7 +21,12 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     const fileCtxManager = new FileContextManager(context);
-    const chatProvider = new ChatViewProvider(context, ollamaClient, fileCtxManager);
+    const chatProvider = new ChatViewProvider(
+        context,
+        ollamaClient,
+        fileCtxManager,
+        sessionManager
+    );
     const inlineCompletionProvider = new InlineCompletionProvider(ollamaClient);
     const commitManager = new CommitManager(ollamaClient, fileCtxManager);
 
@@ -144,6 +154,88 @@ export function activate(context: vscode.ExtensionContext) {
             if (!goal) return;
             vscode.commands.executeCommand('local-ai.chatView.focus');
             setTimeout(() => chatProvider.runAgentFromCommand(goal), 300);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('local-ai.resetChat', async () => {
+            const result = await sessionManager.promptForReset();
+            if (result.reset) {
+                vscode.commands.executeCommand('local-ai.chatView.focus');
+                await chatProvider.resetChat(result.template);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('local-ai.configureModel', async () => {
+            const model = await vscode.window.showInputBox({
+                prompt: 'Nom du modèle à configurer (ex: deepseek-r1:latest)',
+                placeHolder: 'deepseek-r1:latest',
+                validateInput: (value) => {
+                    return value.length > 0 ? null : 'Le nom du modèle ne peut pas être vide';
+                }
+            });
+            if (model) {
+                await modelConfigManager.configureModel(model);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('local-ai.exportSession', async () => {
+            await sessionManager.exportSession();
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('local-ai.importSession', async () => {
+            await sessionManager.importSession();
+            vscode.commands.executeCommand('local-ai.chatView.focus');
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('local-ai.createTemplate', async () => {
+            await sessionManager.createCustomTemplate();
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('local-ai.showModelInfo', async () => {
+            const config = vscode.workspace.getConfiguration('local-ai');
+            const model = config.get<string>('defaultModel', 'llama3');
+            const url = config.get<string>('ollamaUrl', 'http://localhost:11434');
+
+            const modelConfig = await modelConfigManager.getConfig(model, url);
+
+            const info = [
+                `📊 Informations du Modèle`,
+                ``,
+                `Modèle : ${modelConfig.displayName}`,
+                `Limite contexte : ${modelConfig.contextLimit.toLocaleString()} tokens`,
+                `Max caractères : ${modelConfigManager.getMaxChars(model).toLocaleString()}`,
+                `Vision : ${modelConfig.capabilities.vision ? '✅ Oui' : '❌ Non'}`,
+                `Function Calling : ${modelConfig.capabilities.functionCalling ? '✅ Oui' : '❌ Non'}`,
+                `Streaming : ${modelConfig.capabilities.streaming ? '✅ Oui' : '❌ Non'}`,
+                `Provider : ${modelConfig.provider}`,
+                ``,
+                `${modelConfig.userOverride ? '⚙️ Configuration manuelle active' : '🤖 Détection automatique'}`,
+            ].join('\n');
+
+            vscode.window.showInformationMessage(info, { modal: true });
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('local-ai.resetModelConfig', async () => {
+            const model = await vscode.window.showInputBox({
+                prompt: 'Nom du modèle à réinitialiser',
+                placeHolder: 'deepseek-r1:latest'
+            });
+            if (model) {
+                await modelConfigManager.resetConfig(model);
+            }
         })
     );
 

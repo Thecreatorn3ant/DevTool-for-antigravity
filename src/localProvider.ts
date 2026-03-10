@@ -11,50 +11,203 @@ export function isLocalUrl(url: string): boolean {
     return u.includes('localhost') || u.includes('127.0.0.1');
 }
 
+// Mis à jour avec les modèles récents (Mars 2026)
 const LOCAL_CTX: Record<string, number> = {
-    'llama3.3': 131072,
-    'llama3.2': 131072,
-    'llama3.1': 131072,
-    'llama3': 8192,
-    'ministral': 131072,
-    'mistral-small': 32768,
-    'mistral-nemo': 131072,
-    'mistral': 32768,
-    'mixtral': 45000,
-    'deepseek-r1': 131072,
-    'deepseek-v3': 131072,
-    'deepseek-coder-v2': 131072,
-    'deepseek-coder': 16384,
-    'qwen2.5-coder': 131072,
-    'qwen2.5': 131072,
-    'qwen2': 32768,
-    'qwen': 8192,
-    'codellama': 16384,
-    'phi4': 16384,
-    'phi3.5': 16384,
-    'phi3': 4096,
-    'phi': 2048,
-    'gemma3': 131072,
-    'gemma2': 8192,
-    'gemma': 8192,
-    'llava-llama3': 131072,
-    'llava-phi3': 4096,
-    'llava': 4096,
-    'bakllava': 4096,
-    'moondream': 2048,
-    'command-r': 131072,
-    'granite3': 131072,
-    'starcoder2': 16384,
-    'starcoder': 8192,
-    'openchat': 8192,
-    'vicuna': 4096,
+    'gemini-2.0-flash-thinking': 1_000_000,
+    'gemini-2.0-flash-exp': 1_000_000,
+    'gemini-2.0-flash': 1_000_000,
+    'gemini-flash-2': 1_000_000,
+    'gemini-1.5-pro': 1_000_000,
+    'gemini-pro-1.5': 1_000_000,
+    'gemini-1.5-flash': 1_000_000,
+    'gemini-flash-1.5': 1_000_000,
+    'gemini-exp-1206': 1_000_000,
+
+    'deepseek-r1': 131_072,
+    'deepseek-v3': 131_072,
+    'deepseek-coder-v2': 131_072,
+    'deepseek-v2.5': 131_072,
+    'deepseek-coder': 16_384,
+    'llama-3.3': 131_072,
+    'llama3.3': 131_072,
+    'llama-3.2': 131_072,
+    'llama3.2': 131_072,
+    'llama-3.1': 131_072,
+    'llama3.1': 131_072,
+    'llama-3': 8_192,
+    'llama3': 8_192,
+
+    'qwen2.5-coder': 131_072,
+    'qwen-2.5-coder': 131_072,
+    'qwen2.5': 131_072,
+    'qwen-2.5': 131_072,
+    'qwen2': 32_768,
+    'qwen': 8_192,
+
+    'ministral': 131_072,
+    'mistral-small-3': 131_072,
+    'mistral-small': 32_768,
+    'mistral-nemo': 131_072,
+    'mistral': 32_768,
+    'mixtral': 45_000,
+
+    'claude-opus-4': 200_000,
+    'claude-sonnet-4': 200_000,
+    'claude-3.5': 200_000,
+    'claude-3-5': 200_000,
+    'claude': 100_000,
+
+    'command-r': 131_072,
+    'granite3': 131_072,
+    'granite-3': 131_072,
+    'phi-4': 16_384,
+    'phi4': 16_384,
+    'phi-3.5': 16_384,
+    'phi3.5': 16_384,
+    'phi-3': 4_096,
+    'phi3': 4_096,
+    'phi': 2_048,
+
+    'gemma3': 131_072,
+    'gemma-3': 131_072,
+    'gemma2': 8_192,
+    'gemma': 8_192,
+
+    'codellama': 16_384,
+    'code-llama': 16_384,
+    'starcoder2': 16_384,
+    'starcoder-2': 16_384,
+    'starcoder': 8_192,
+
+    'llava-llama3': 131_072,
+    'llava-phi3': 4_096,
+    'llava': 4_096,
+    'bakllava': 4_096,
+    'moondream': 2_048,
+
+    'openchat': 8_192,
+    'vicuna': 4_096,
 };
 
 const _ctxCache = new Map<string, number>();
 
+function detectContextByName(modelName: string): number {
+    const name = modelName.toLowerCase();
+
+    if (name.includes('gemini-2.0-flash') ||
+        name.includes('gemini-flash-2') ||
+        name.includes('gemini-exp-1206')) {
+        console.log(`[LocalProvider] Détecté Gemini 2.0 Flash → 1M tokens`);
+        return 1_000_000;
+    }
+
+    if (name.includes('gemini-1.5-pro') ||
+        name.includes('gemini-pro-1.5') ||
+        name.includes('gemini-1.5-flash') ||
+        name.includes('gemini-flash-1.5')) {
+        console.log(`[LocalProvider] Détecté Gemini 1.5 → 1M tokens`);
+        return 1_000_000;
+    }
+
+    if (name.includes('deepseek-r1') ||
+        name.includes('deepseek-v3') ||
+        name.includes('deepseek-coder-v2')) {
+        console.log(`[LocalProvider] Détecté DeepSeek R1/V3 → 131k tokens`);
+        return 131_072;
+    }
+
+    if (name.includes('claude-opus-4') ||
+        name.includes('claude-sonnet-4')) {
+        console.log(`[LocalProvider] Détecté Claude 4 → 200k tokens`);
+        return 200_000;
+    }
+
+    if (name.includes('claude-3.5') || name.includes('claude-3-5')) {
+        console.log(`[LocalProvider] Détecté Claude 3.5 → 200k tokens`);
+        return 200_000;
+    }
+
+    if (name.includes('claude')) {
+        console.log(`[LocalProvider] Détecté Claude générique → 100k tokens`);
+        return 100_000;
+    }
+
+    if (name.includes('llama-3.3') || name.includes('llama3.3')) {
+        return 131_072;
+    }
+    if (name.includes('llama-3.2') || name.includes('llama3.2')) {
+        return 131_072;
+    }
+    if (name.includes('llama-3.1') || name.includes('llama3.1')) {
+        return 131_072;
+    }
+
+    if (name.includes('qwen2.5-coder') || name.includes('qwen-2.5-coder')) {
+        return 131_072;
+    }
+    if (name.includes('qwen2.5') || name.includes('qwen-2.5')) {
+        return 131_072;
+    }
+
+    if (name.includes('ministral')) {
+        return 131_072;
+    }
+    if (name.includes('mistral-nemo') || name.includes('mistral-small-3')) {
+        return 131_072;
+    }
+    if (name.includes('mixtral')) {
+        return 45_000;
+    }
+
+    if (name.includes('command-r')) {
+        return 131_072;
+    }
+    if (name.includes('granite3') || name.includes('granite-3')) {
+        return 131_072;
+    }
+
+    if (name.includes('gemma3') || name.includes('gemma-3')) {
+        return 131_072;
+    }
+    if (name.includes('phi-4') || name.includes('phi4')) {
+        return 16_384;
+    }
+    if (name.includes('phi-3.5') || name.includes('phi3.5')) {
+        return 16_384;
+    }
+
+    if (name.includes('codellama') || name.includes('code-llama')) {
+        return 16_384;
+    }
+    if (name.includes('starcoder2') || name.includes('starcoder-2')) {
+        return 16_384;
+    }
+
+    if (name.includes('llava-llama3')) {
+        return 131_072;
+    }
+    if (name.includes('llava')) {
+        return 4_096;
+    }
+
+    const sorted = Object.entries(LOCAL_CTX).sort((a, b) => b[0].length - a[0].length);
+    for (const [key, limit] of sorted) {
+        if (name.includes(key)) {
+            console.log(`[LocalProvider] Fallback match "${key}" → ${limit} tokens`);
+            return limit;
+        }
+    }
+
+    console.warn(`[LocalProvider] ⚠️ Modèle inconnu "${modelName}" → 8k tokens par défaut`);
+    return 8_192;
+}
+
 export async function getLocalContextSize(model: string, baseUrl: string = 'http://localhost:11434'): Promise<number> {
     const cacheKey = `${baseUrl}||${model}`;
-    if (_ctxCache.has(cacheKey)) return _ctxCache.get(cacheKey)!;
+
+    if (_ctxCache.has(cacheKey)) {
+        return _ctxCache.get(cacheKey)!;
+    }
 
     try {
         const res = await fetch(`${baseUrl}/api/show`, {
@@ -63,28 +216,27 @@ export async function getLocalContextSize(model: string, baseUrl: string = 'http
             body: JSON.stringify({ name: model }),
             signal: AbortSignal.timeout(3000),
         });
+
         if (res.ok) {
             const data: any = await res.json();
             const numCtx: number | undefined =
                 data?.model_info?.['llm.context_length'] ??
                 data?.parameters?.num_ctx ??
                 data?.details?.context_length;
+
             if (numCtx && numCtx > 0) {
+                console.log(`[LocalProvider] ✓ API Ollama: ${model} → ${numCtx} tokens`);
                 _ctxCache.set(cacheKey, numCtx);
                 return numCtx;
             }
         }
-    } catch { /* Ollama inaccessible → fallback */ }
-
-    const m = model.toLowerCase();
-    const sorted = Object.entries(LOCAL_CTX).sort((a, b) => b[0].length - a[0].length);
-    for (const [key, limit] of sorted) {
-        if (m.includes(key)) {
-            _ctxCache.set(cacheKey, limit);
-            return limit;
-        }
+    } catch (e: any) {
+        console.warn(`[LocalProvider] API Ollama inaccessible: ${e.message}`);
     }
-    return 8192;
+
+    const detected = detectContextByName(model);
+    _ctxCache.set(cacheKey, detected);
+    return detected;
 }
 
 export async function getLocalMaxChars(model: string, baseUrl?: string): Promise<number> {
