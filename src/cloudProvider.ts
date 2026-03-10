@@ -355,7 +355,6 @@ export async function cloudStream(
     } else if (type === 'anthropic') {
         return anthropicStream(opts, onChunk);
     } else if (type === 'xai') {
-        // Normalisation de l'URL pour xAI (Grok) : ajout de /v1 si manquant
         const baseUrl = opts.baseUrl.replace(/\/+$/, '');
         const finalUrl = baseUrl.endsWith('/v1') ? baseUrl : `${baseUrl}/v1`;
         return openAICompatStream({ ...opts, baseUrl: finalUrl }, onChunk);
