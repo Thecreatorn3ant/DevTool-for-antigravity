@@ -2073,7 +2073,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         <span class="header-brand">ANTIGRAVITY</span>
         <div class="header-controls">
             <button class="btn-cloud" id="btnCloud">☁️ Cloud</button>
-            <button class="btn-cloud" id="btnOnboarding" onclick="if(typeof obOpen==='function'){obOpen();}else{document.getElementById('obOverlay').style.opacity='0';document.getElementById('obOverlay').style.display='flex';setTimeout(function(){document.getElementById('obOverlay').style.transition='opacity 0.4s';document.getElementById('obOverlay').style.opacity='1';},20);}" title="Revoir le guide de démarrage" style="padding:4px 8px;">🛸</button>
+            <button class="btn-cloud" id="btnOnboarding" onclick="obOpen();" title="Revoir le guide de démarrage" style="padding:4px 8px;">🛸</button>
             <div id="modelComboWrap">
                 <div id="modelComboBox">
                     <input id="modelSearch" type="text" placeholder="Modèle…" autocomplete="off" spellcheck="false">
@@ -2400,6 +2400,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             text-shadow: 0 0 30px rgba(0,210,255,0.4);
         }
         .ob-celebration p { font-size: 12px; color: #555; line-height: 1.6; margin: 0 0 14px; }
+        #obCloseBtn:hover { background: rgba(255,80,80,0.15) !important; color: #ff8888 !important; border-color: rgba(255,80,80,0.3) !important; }
     </style>
 
     <div id="obOverlay">
@@ -2415,7 +2416,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         <span class="ob-brand-tag">Antigravity IDE</span>
                         <span class="ob-step-label" id="obStepLabel">step 1 / 5</span>
                     </div>
-                    <button id="obCloseBtn" onclick="obSkip()" title="Fermer et revenir au chat" style="margin-left:auto;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#666;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all 0.2s;flex-shrink:0;font-family:'Inter',sans-serif;" onmouseover="this.style.background='rgba(255,80,80,0.15)';this.style.color='#ff8888';this.style.borderColor='rgba(255,80,80,0.3)';" onmouseout="this.style.background='rgba(255,255,255,0.05)';this.style.color='#666';this.style.borderColor='rgba(255,255,255,0.1)';">✕</button>
+                    <button id="obCloseBtn" onclick="obSkip();" title="Fermer et revenir au chat" style="margin-left:auto;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#666;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:sans-serif;">✕</button>
                 </div>
                 <h2 class="ob-title" id="obMainTitle">Mission Briefing</h2>
                 <p class="ob-sub" id="obMainSub">Configure your AI co-pilot in 60 seconds.</p>
@@ -2675,34 +2676,41 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         };
 
         window.obFinish = function() {
-            var overlay = document.getElementById('obOverlay');
-            if (overlay) {
-                overlay.style.transition = 'opacity 0.4s';
-                overlay.style.opacity = '0';
-                setTimeout(function(){ overlay.style.display = 'none'; }, 400);
-            }
             vscode.postMessage({ type: 'finishOnboarding' });
             setTimeout(function(){ vscode.postMessage({ type: 'getModels' }); }, 800);
         };
 
-        window.obSkip = function() {
-            var overlay = document.getElementById('obOverlay');
-            if (overlay) {
-                overlay.style.transition = 'opacity 0.4s';
-                overlay.style.opacity = '0';
-                setTimeout(function(){ overlay.style.display = 'none'; overlay.style.opacity = '1'; }, 400);
-            }
-        };
+        if (typeof _showOnboarding !== 'undefined' && _showOnboarding) {
+            document.getElementById('obOverlay').style.display = 'flex';
+        }
+    })();
+    </script>
 
-        window.obOpen = function() {
-            var overlay = document.getElementById('obOverlay');
-            if (overlay) {
-                overlay.style.opacity = '0';
-                overlay.style.display = 'flex';
-                setTimeout(function(){ overlay.style.transition = 'opacity 0.4s'; overlay.style.opacity = '1'; }, 20);
-            }
-        };
+    <script>
+        function obSkip() {
+            var o = document.getElementById('obOverlay');
+            if (!o) return;
+            o.style.transition = 'opacity 0.4s';
+            o.style.opacity = '0';
+            setTimeout(function(){ o.style.display = 'none'; o.style.opacity = '1'; o.style.transition = ''; }, 400);
+        }
+        function obOpen() {
+            var o = document.getElementById('obOverlay');
+            if (!o) return;
+            o.style.transition = '';
+            o.style.opacity = '0';
+            o.style.display = 'flex';
+            setTimeout(function(){ o.style.transition = 'opacity 0.4s'; o.style.opacity = '1'; }, 20);
+        }
+        function obFinish() {
+            var o = document.getElementById('obOverlay');
+            if (o) { o.style.transition = 'opacity 0.4s'; o.style.opacity = '0'; setTimeout(function(){ o.style.display = 'none'; }, 400); }
+            vscode.postMessage({ type: 'finishOnboarding' });
+            setTimeout(function(){ vscode.postMessage({ type: 'getModels' }); }, 800);
+        }
+    </script>
 
+    <script>
         (function initCanvas() {
             var canvas = document.getElementById('obCanvas');
             if (!canvas) return;
@@ -2784,7 +2792,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (typeof _showOnboarding !== 'undefined' && _showOnboarding) {
             document.getElementById('obOverlay').style.display = 'flex';
         }
-    })();
     </script>
 </body>
 </html>`;
