@@ -247,7 +247,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             enableScripts: true,
             localResourceRoots: [this._context.extensionUri]
         };
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+        const onboardingComplete = this._context.globalState.get('antigravity.onboardingComplete', false);
+        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview, !onboardingComplete);
 
         webviewView.webview.onDidReceiveMessage(async (data) => {
             switch (data.type) {
@@ -298,6 +299,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'addRelatedFiles':
                     await this._handleAddRelatedFiles();
+                    break;
+                case 'finishOnboarding':
+                    await this._context.globalState.update('antigravity.onboardingComplete', true);
+                    break;
+                case 'setupGeminiKey':
+                    if (data.key) {
+                        await this._ollamaClient.addApiKey({
+                            name: 'Google Gemini (Onboarding)',
+                            url: 'https://generativelanguage.googleapis.com/v1beta',
+                            key: data.key
+                        });
+                        vscode.window.showInformationMessage('✅ Clé Gemini configurée avec succès !');
+                        await this._updateModelsList();
+                    }
                     break;
                 case 'toggleThinkMode':
                     this._thinkMode = !this._thinkMode;
@@ -542,7 +557,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         } catch (e: any) {
             if (e.name === 'AbortError') {
-                // Arrêt volontaire - message dans le chat
                 this._history.push({
                     role: 'ai',
                     value: '⚠️ Génération arrêtée par l\'utilisateur.'
@@ -561,67 +575,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 let errorMessage = '';
 
                 if (is403) {
-                    errorMessage = `❌ **Erreur 403 - Accès refusé**
-
-La requête a été refusée par le serveur. Causes possibles :
-• Clé API invalide ou expirée
-• Modèle non disponible pour votre région
-• Permissions insuffisantes pour ce modèle
-• Quota API épuisé
-
-**Solutions :**
-1. Vérifiez votre clé API dans les paramètres (☁️ Cloud)
-2. Essayez un autre modèle
-3. Consultez les limites de votre compte API
-
-_Détails : ${msg}_`;
+                    errorMessage = `❌ **Erreur 403 - Accès refusé**\n\nLa requête a été refusée par le serveur.\n\n**Solutions :**\n1. Vérifiez votre clé API dans les paramètres (☁️ Cloud)\n2. Essayez un autre modèle\n\n_Détails : ${msg}_`;
                 } else if (is404) {
-                    errorMessage = `❌ **Erreur 404 - Modèle introuvable**
-
-Le modèle demandé n'existe pas ou n'est plus disponible.
-
-**Solutions :**
-1. Vérifiez le nom du modèle
-2. Sélectionnez un autre modèle dans la liste
-3. Mettez à jour la liste des modèles disponibles
-
-_Détails : ${msg}_`;
+                    errorMessage = `❌ **Erreur 404 - Modèle introuvable**\n\nLe modèle demandé n'existe pas ou n'est plus disponible.\n\n_Détails : ${msg}_`;
                 } else if (isRateLimit) {
-                    errorMessage = `⚠️ **Erreur 429 - Limite de requêtes atteinte**
-
-Vous avez atteint la limite de requêtes autorisées.
-
-**Solutions :**
-1. Attendez quelques minutes avant de réessayer
-2. Passez à un autre compte API si disponible
-3. Vérifiez les limites de votre plan API
-
-_Détails : ${msg}_`;
+                    errorMessage = `⚠️ **Erreur 429 - Limite de requêtes atteinte**\n\nVous avez atteint la limite de requêtes autorisées.\n\n_Détails : ${msg}_`;
                 } else {
-                    errorMessage = `❌ **Erreur lors de la génération**
-
-Une erreur inattendue s'est produite :
-
-\`\`\`
-${msg}
-\`\`\`
-
-**Si l'erreur persiste :**
-• Vérifiez votre connexion réseau
-• Essayez un autre modèle
-• Consultez les logs de l'extension`;
+                    errorMessage = `❌ **Erreur lors de la génération**\n\n\`\`\`\n${msg}\n\`\`\``;
                 }
 
-                this._history.push({
-                    role: 'ai',
-                    value: errorMessage
-                });
+                this._history.push({ role: 'ai', value: errorMessage });
                 this._updateHistory();
-
-                this._view.webview.postMessage({
-                    type: 'endResponse',
-                    value: errorMessage
-                });
+                this._view.webview.postMessage({ type: 'endResponse', value: errorMessage });
             }
             this._sendTokenBudget();
         } finally {
@@ -638,23 +603,13 @@ ${msg}
 
     private _handleRevertTo(index: number) {
         if (index < 0 || index >= this._history.length) return;
-
         const msg = this._history[index];
         if (msg.role !== 'user') return;
-
         const textToRestore = msg.value;
         this._history = this._history.slice(0, index);
         this._updateHistory();
-
-        this._view?.webview.postMessage({
-            type: 'restoreHistory',
-            history: this._history
-        });
-
-        this._view?.webview.postMessage({
-            type: 'injectMessage',
-            value: textToRestore
-        });
+        this._view?.webview.postMessage({ type: 'restoreHistory', history: this._history });
+        this._view?.webview.postMessage({ type: 'injectMessage', value: textToRestore });
     }
 
     private async _processAiResponse(response: string) {
@@ -730,7 +685,6 @@ ${msg}
                     `L'IA propose des modifications sur ${multiPatches.size} fichier(s) : ${fileList}`,
                     '📋 Appliquer', '👁 Voir fichier par fichier', '❌ Ignorer'
                 );
-
                 if (answer === '📋 Appliquer') {
                     await this._handleMultiFileApply(
                         Array.from(multiPatches.entries()).map(([name, patch]) => ({ name, patch }))
@@ -796,7 +750,7 @@ ${msg}
         const keyItems: KeyMenuItem[] = statuses.map((s, i) => ({
             label: `${s.statusIcon} ${s.entry.name}`,
             description: s.entry.url,
-            detail: `${s.statusLabel}${s.cooldownSecsLeft ? '' : ''}  ·  Ajouté ${s.entry.addedAt ? new Date(s.entry.addedAt).toLocaleDateString('fr-FR') : 'N/A'}`,
+            detail: `${s.statusLabel}  ·  Ajouté ${s.entry.addedAt ? new Date(s.entry.addedAt).toLocaleDateString('fr-FR') : 'N/A'}`,
             action: 'select',
             keyIdx: i,
         }));
@@ -804,23 +758,13 @@ ${msg}
         const items: KeyMenuItem[] = [
             ...keyItems,
             { label: '', kind: vscode.QuickPickItemKind.Separator } as any,
-            {
-                label: '$(add)  Ajouter une clé API',
-                description: 'Configurer un nouveau provider cloud',
-                action: 'add',
-            },
-            {
-                label: '$(gear)  Gérer les clés existantes',
-                description: 'Modifier / Supprimer / Réinitialiser le cooldown',
-                action: 'manage',
-            },
+            { label: '$(add)  Ajouter une clé API', description: 'Configurer un nouveau provider cloud', action: 'add' },
+            { label: '$(gear)  Gérer les clés existantes', description: 'Modifier / Supprimer / Réinitialiser le cooldown', action: 'manage' },
         ];
 
         const picked = await vscode.window.showQuickPick(items, {
             title: '☁️ Gestion des clés API Cloud',
-            placeHolder: statuses.length === 0
-                ? 'Aucune clé configurée — ajoutez-en une'
-                : 'Sélectionner un compte ou gérer les clés',
+            placeHolder: statuses.length === 0 ? 'Aucune clé configurée — ajoutez-en une' : 'Sélectionner un compte ou gérer les clés',
             matchOnDescription: true,
             matchOnDetail: false,
         });
@@ -862,18 +806,8 @@ ${msg}
             needsKey: boolean;
         }
         const PRESET_URLS: UrlPreset[] = [
-            {
-                label: '☁️ Ollama Cloud (ollama.com)',
-                description: 'https://api.ollama.com',
-                needsKey: true,
-                detail: 'Clé API sur ollama.com/settings — modèles hébergés par Ollama'
-            },
-            {
-                label: '⚡ Ollama auto-hébergé (sans clé)',
-                description: '',
-                needsKey: false,
-                detail: 'Serveur Ollama local ou VPS — clé non requise'
-            },
+            { label: '☁️ Ollama Cloud (ollama.com)', description: 'https://api.ollama.com', needsKey: true, detail: 'Clé API sur ollama.com/settings' },
+            { label: '⚡ Ollama auto-hébergé (sans clé)', description: '', needsKey: false, detail: 'Serveur Ollama local ou VPS' },
             { label: 'Anthropic Claude', description: 'https://api.anthropic.com/v1', needsKey: true },
             { label: 'DeepSeek', description: 'https://api.deepseek.com/v1', needsKey: true },
             { label: 'Google Gemini', description: 'https://generativelanguage.googleapis.com/v1beta', needsKey: true },
@@ -886,10 +820,7 @@ ${msg}
             { label: 'Perplexity', description: 'https://api.perplexity.ai', needsKey: true },
             { label: 'xAI (Grok)', description: 'https://api.x.ai/v1', needsKey: true },
             { label: 'Fireworks AI', description: 'https://api.fireworks.ai/inference/v1', needsKey: true },
-            {
-                label: 'Autre / Personnalisé…', description: '', needsKey: true,
-                detail: 'Entrer une URL manuellement'
-            },
+            { label: 'Autre / Personnalisé…', description: '', needsKey: true, detail: 'Entrer une URL manuellement' },
         ];
 
         const urlPick = await vscode.window.showQuickPick(PRESET_URLS, {
@@ -904,9 +835,7 @@ ${msg}
             const isOllama = urlPick.label.startsWith('⚡');
             const custom = await vscode.window.showInputBox({
                 title: "URL de base de l'API",
-                prompt: isOllama
-                    ? 'URL de votre serveur Ollama (ex: http://mon-vps:11434)'
-                    : "URL de base de l'API (sans slash final)",
+                prompt: isOllama ? 'URL de votre serveur Ollama' : "URL de base de l'API",
                 placeHolder: isOllama ? 'http://mon-serveur:11434' : 'https://mon-serveur.com/v1',
                 ignoreFocusOut: true,
             });
@@ -915,13 +844,10 @@ ${msg}
         }
 
         const keyRequired = urlPick.needsKey;
-        const isOllamaCloud = urlPick.label.startsWith('☁️ Ollama Cloud');
         const key = await vscode.window.showInputBox({
             title: 'Ajouter un provider — 3/3',
-            prompt: keyRequired
-                ? `Clé API pour "${name}"`
-                : `Clé API pour "${name}" (optionnelle — laisser vide si Ollama sans auth)`,
-            placeHolder: isOllamaCloud ? 'Clé sur ollama.com/settings' : keyRequired ? 'sk-…' : '(optionnel)',
+            prompt: keyRequired ? `Clé API pour "${name}"` : `Clé API pour "${name}" (optionnelle)`,
+            placeHolder: keyRequired ? 'sk-…' : '(optionnel)',
             password: true,
             ignoreFocusOut: true,
         });
@@ -940,21 +866,16 @@ ${msg}
     private async _handleManageKeys() {
         const statuses = await this._ollamaClient.getApiKeyStatusesAsync();
         if (statuses.length === 0) {
-            const addNow = await vscode.window.showInformationMessage(
-                'Aucune clé configurée. Ajouter une clé ?', 'Ajouter', 'Annuler'
-            );
+            const addNow = await vscode.window.showInformationMessage('Aucune clé configurée. Ajouter une clé ?', 'Ajouter', 'Annuler');
             if (addNow === 'Ajouter') await this._handleAddKey();
             return;
         }
 
-        interface ManageItem extends vscode.QuickPickItem {
-            statusIdx: number;
-        }
-
+        interface ManageItem extends vscode.QuickPickItem { statusIdx: number; }
         const items: ManageItem[] = statuses.map((s, i) => ({
             label: `${s.statusIcon} ${s.entry.name}`,
             description: s.entry.url,
-            detail: s.statusLabel + (s.entry.key ? `  ·  Clé: ${s.entry.key.substring(0, 8)}${'·'.repeat(8)}` : ''),
+            detail: s.statusLabel + (s.entry.key ? `  ·  Clé: ${s.entry.key.substring(0, 8)}········` : ''),
             statusIdx: i,
         }));
 
@@ -971,67 +892,35 @@ ${msg}
     private async _handleKeyActions(target: ApiKeyStatus) {
         const entry = target.entry;
         const actions: vscode.QuickPickItem[] = [
-            {
-                label: '✏️  Renommer',
-                description: `Nom actuel : "${entry.name}"`,
-            },
-            {
-                label: '🔑  Changer la clé API',
-                description: `Clé actuelle : ${entry.key.substring(0, 8)}·····`,
-            },
-            ...(target.status === 'cooldown' ? [{
-                label: '🔄  Réinitialiser le cooldown',
-                description: `Restant : ${target.cooldownSecsLeft}s`,
-            }] : []),
-            {
-                label: '🗑️  Supprimer cette clé',
-                description: `"${entry.name}" — ${entry.url}`,
-            },
-            {
-                label: '↩️  Retour',
-            },
+            { label: '✏️  Renommer', description: `Nom actuel : "${entry.name}"` },
+            { label: '🔑  Changer la clé API', description: `Clé actuelle : ${entry.key.substring(0, 8)}·····` },
+            ...(target.status === 'cooldown' ? [{ label: '🔄  Réinitialiser le cooldown', description: `Restant : ${target.cooldownSecsLeft}s` }] : []),
+            { label: '🗑️  Supprimer cette clé', description: `"${entry.name}" — ${entry.url}` },
+            { label: '↩️  Retour' },
         ];
 
-        const action = await vscode.window.showQuickPick(actions, {
-            title: `⚙️ Actions — ${entry.name}`,
-        });
-        if (!action || action.label === '↩️  Retour') {
-            await this._handleManageKeys();
-            return;
-        }
+        const action = await vscode.window.showQuickPick(actions, { title: `⚙️ Actions — ${entry.name}` });
+        if (!action || action.label === '↩️  Retour') { await this._handleManageKeys(); return; }
 
         if (action.label.startsWith('✏️')) {
-            const newName = await vscode.window.showInputBox({
-                prompt: 'Nouveau nom',
-                value: entry.name,
-                ignoreFocusOut: true,
-            });
+            const newName = await vscode.window.showInputBox({ prompt: 'Nouveau nom', value: entry.name, ignoreFocusOut: true });
             if (!newName || newName === entry.name) return;
             await this._ollamaClient.updateApiKey(entry.key, entry.url, { name: newName });
             this._showNotification(`✅ Renommé en "${newName}"`, 'success');
-
         } else if (action.label.startsWith('🔑')) {
-            const newKey = await vscode.window.showInputBox({
-                prompt: `Nouvelle clé API pour "${entry.name}"`,
-                placeHolder: 'sk-…',
-                password: true,
-                ignoreFocusOut: true,
-            });
+            const newKey = await vscode.window.showInputBox({ prompt: `Nouvelle clé API pour "${entry.name}"`, placeHolder: 'sk-…', password: true, ignoreFocusOut: true });
             if (!newKey) return;
             await this._ollamaClient.deleteApiKey(entry.key, entry.url);
             await this._ollamaClient.addApiKey({ name: entry.name, url: entry.url, key: newKey, platform: entry.platform });
             this._showNotification(`✅ Clé mise à jour pour "${entry.name}"`, 'success');
             await this._updateModelsList(entry.url, newKey);
-
         } else if (action.label.startsWith('🔄')) {
             await this._ollamaClient.resetKeyCooldown(entry.key, entry.url);
             this._showNotification(`✅ Cooldown réinitialisé — "${entry.name}" disponible`, 'success');
-
         } else if (action.label.startsWith('🗑️')) {
             const confirm = await vscode.window.showWarningMessage(
                 `Supprimer la clé "${entry.name}" ? Cette action est irréversible.`,
-                { modal: true },
-                '🗑️ Supprimer', 'Annuler'
+                { modal: true }, '🗑️ Supprimer', 'Annuler'
             );
             if (confirm !== '🗑️ Supprimer') return;
             await this._ollamaClient.deleteApiKey(entry.key, entry.url);
@@ -1056,15 +945,10 @@ ${msg}
                 deepseek: '◉', cohere: '◈', perplexity: '◎', xai: '◈',
                 fireworks: '⚡', 'ollama-cloud': '☁️'
             };
-            const formattedModels: Array<{
-                label: string; value: string; name: string; url: string; isLocal: boolean; provider: string;
-            }> = allModels.map(m => ({
+            const formattedModels: Array<{ label: string; value: string; name: string; url: string; isLocal: boolean; provider: string }> = allModels.map(m => ({
                 label: `${PROVIDER_ICONS[m.provider] || '☁️'} ${m.name}`,
                 value: m.isLocal ? m.name : `${m.url}||${m.name}`,
-                name: m.name,
-                url: m.url,
-                isLocal: m.isLocal,
-                provider: m.provider
+                name: m.name, url: m.url, isLocal: m.isLocal, provider: m.provider
             }));
 
             if (tmpKey) {
@@ -1113,11 +997,7 @@ ${msg}
     }
 
     private _showNotification(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
-        this._view?.webview.postMessage({
-            type: 'notification',
-            message,
-            notificationType: type
-        });
+        this._view?.webview.postMessage({ type: 'notification', message, notificationType: type });
     }
 
     private _updateHistory() {
@@ -1125,10 +1005,7 @@ ${msg}
     }
 
     private _getFormattedHistory(): string {
-        return this._history
-            .slice(-10)
-            .map(m => `${m.role}: ${m.value.substring(0, 300)}`)
-            .join('\n');
+        return this._history.slice(-10).map(m => `${m.role}: ${m.value.substring(0, 300)}`).join('\n');
     }
 
     private async _handleFileCreation(fileName: string, content: string) {
@@ -1189,7 +1066,6 @@ ${msg}
             if (files.length > 0) {
                 uri = files.find(f => f.fsPath.replace(/\\/g, '/').toLowerCase().endsWith(clean.replace(/\\/g, '/').toLowerCase())) || files[0];
             }
-
             if (!uri) {
                 const openDoc = vscode.workspace.textDocuments.find(d =>
                     d.uri.fsPath.replace(/\\/g, '/').toLowerCase().endsWith(clean.replace(/\\/g, '/').toLowerCase())
@@ -1234,7 +1110,7 @@ ${msg}
         }
 
         if (hasMarkers && patchCount === 0) {
-            const retry = await vscode.window.showErrorMessage(
+            await vscode.window.showErrorMessage(
                 `Le bloc SEARCH/REPLACE n'a pas pu être appliqué à "${path.basename(uri.fsPath)}".`,
                 'Fermer'
             );
@@ -1266,16 +1142,11 @@ ${msg}
             await doc.save();
             await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
             const editor = await vscode.window.showTextDocument(doc, {
-                preview: false,
-                preserveFocus: false,
-                viewColumn: vscode.ViewColumn.Active
+                preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.Active
             });
 
             const changedRanges = this._highlightChangedLines(editor, oldText, previewText);
-
-            const firstChangedLine = changedRanges.length > 0
-                ? changedRanges[0].start.line + 1
-                : 1;
+            const firstChangedLine = changedRanges.length > 0 ? changedRanges[0].start.line + 1 : 1;
 
             if (changedRanges.length > 0) {
                 editor.selection = new vscode.Selection(changedRanges[0].start, changedRanges[0].start);
@@ -1283,10 +1154,7 @@ ${msg}
             }
 
             const fileName = path.basename(uri.fsPath);
-            const detail = patchCount > 0
-                ? `${patchCount} patch(s) • Ligne ${firstChangedLine}`
-                : 'Fichier remplacé';
-
+            const detail = patchCount > 0 ? `${patchCount} patch(s) • Ligne ${firstChangedLine}` : 'Fichier remplacé';
             this._showNotification(`✅ ${fileName}: ${detail}`, 'success');
 
             setTimeout(async () => {
@@ -1303,19 +1171,6 @@ ${msg}
                 }
             }, 1000);
         }
-    }
-
-    private _buildPatchSummary(fileName: string, oldText: string, newText: string, patchCount: number): string {
-        const oldLines = oldText.split('\n');
-        const newLines = newText.split('\n');
-        let added = 0, removed = 0;
-        const oldSet = new Set(oldLines);
-        const newSet = new Set(newLines);
-        for (const l of newLines) { if (!oldSet.has(l)) added++; }
-        for (const l of oldLines) { if (!newSet.has(l)) removed++; }
-        const delta = newLines.length - oldLines.length;
-        const sign = delta >= 0 ? '+' : '';
-        return `${patchCount} bloc(s) modifié(s) dans **${fileName}** · +${added} / -${removed} lignes (${sign}${delta})`;
     }
 
     private _highlightChangedLines(editor: vscode.TextEditor, oldText: string, newText: string): vscode.Range[] {
@@ -1339,7 +1194,6 @@ ${msg}
         });
         editor.setDecorations(dec, changedRanges);
         setTimeout(() => dec.dispose(), 4000);
-
         return changedRanges;
     }
 
@@ -1354,23 +1208,14 @@ ${msg}
 
     private async _handleRunCommand(cmd: string, isImportant: boolean = false) {
         const perm = this._terminalPermission;
-
         let shouldRun = false;
 
         if (perm === 'allow-all') {
             shouldRun = true;
-            this._view?.webview.postMessage({
-                type: 'terminalCommand',
-                cmd,
-                status: 'auto',
-            });
+            this._view?.webview.postMessage({ type: 'terminalCommand', cmd, status: 'auto' });
         } else if (perm === 'ask-important' && !isImportant) {
             shouldRun = true;
-            this._view?.webview.postMessage({
-                type: 'terminalCommand',
-                cmd,
-                status: 'auto',
-            });
+            this._view?.webview.postMessage({ type: 'terminalCommand', cmd, status: 'auto' });
         } else {
             const answer = await vscode.window.showInformationMessage(
                 `${isImportant ? '⚠️ Commande importante' : '💻 Terminal'} — Exécuter : \`${cmd}\``,
@@ -1378,11 +1223,7 @@ ${msg}
                 '🚀 Exécuter', '❌ Refuser'
             );
             shouldRun = answer === '🚀 Exécuter';
-            this._view?.webview.postMessage({
-                type: 'terminalCommand',
-                cmd,
-                status: shouldRun ? 'accepted' : 'refused',
-            });
+            this._view?.webview.postMessage({ type: 'terminalCommand', cmd, status: shouldRun ? 'accepted' : 'refused' });
         }
 
         if (shouldRun) {
@@ -1457,10 +1298,7 @@ ${msg}
                 formatted,
             });
         });
-        this._view?.webview.postMessage({
-            type: 'lspWatchToggled',
-            active: this._lspWatchActive
-        });
+        this._view?.webview.postMessage({ type: 'lspWatchToggled', active: this._lspWatchActive });
         vscode.window.showInformationMessage(
             this._lspWatchActive
                 ? "👁 Surveillance LSP activée — l'IA sera notifiée des nouvelles erreurs."
@@ -1484,53 +1322,34 @@ ${msg}
             switch (event.type) {
                 case 'step_start':
                     this._view.webview.postMessage({
-                        type: 'agentStep',
-                        status: 'running',
-                        stepId: event.step!.id,
-                        stepType: event.step!.type,
-                        description: event.step!.description,
-                        totalSteps: event.session.steps.length,
+                        type: 'agentStep', status: 'running',
+                        stepId: event.step!.id, stepType: event.step!.type,
+                        description: event.step!.description, totalSteps: event.session.steps.length,
                     });
                     break;
                 case 'step_done':
                     this._view.webview.postMessage({
-                        type: 'agentStep',
-                        status: 'done',
-                        stepId: event.step!.id,
-                        stepType: event.step!.type,
+                        type: 'agentStep', status: 'done',
+                        stepId: event.step!.id, stepType: event.step!.type,
                         description: event.step!.description,
-                        output: event.step!.output,
-                        durationMs: event.step!.durationMs,
+                        output: event.step!.output, durationMs: event.step!.durationMs,
                     });
                     break;
                 case 'step_failed':
                     this._view.webview.postMessage({
-                        type: 'agentStep',
-                        status: 'failed',
-                        stepId: event.step!.id,
-                        stepType: event.step!.type,
-                        description: event.step!.description,
-                        output: event.step!.output,
+                        type: 'agentStep', status: 'failed',
+                        stepId: event.step!.id, stepType: event.step!.type,
+                        description: event.step!.description, output: event.step!.output,
                     });
                     break;
                 case 'session_done':
-                    this._view.webview.postMessage({
-                        type: 'agentDone',
-                        summary: event.message,
-                        steps: event.session.steps.length,
-                    });
+                    this._view.webview.postMessage({ type: 'agentDone', summary: event.message, steps: event.session.steps.length });
                     break;
                 case 'session_failed':
-                    this._view.webview.postMessage({
-                        type: 'agentFailed',
-                        reason: event.message,
-                    });
+                    this._view.webview.postMessage({ type: 'agentFailed', reason: event.message });
                     break;
                 case 'log':
-                    this._view.webview.postMessage({
-                        type: 'agentLog',
-                        message: event.message,
-                    });
+                    this._view.webview.postMessage({ type: 'agentLog', message: event.message });
                     break;
             }
         });
@@ -1544,7 +1363,7 @@ ${msg}
         this._agentSession = await this._agentRunner.run(goal, model, url, initialContext);
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview): string {
+    private _getHtmlForWebview(webview: vscode.Webview, showOnboarding: boolean = false): string {
         const bgUri = webview.asWebviewUri(
             vscode.Uri.joinPath(this._context.extensionUri, 'media', 'background.png')
         );
@@ -1555,7 +1374,6 @@ ${msg}
             "const chat = document.getElementById('chat');",
             "const promptEl = document.getElementById('prompt');",
             "",
-            "// ─── Image paste/drop handling ───",
             "var attachedImages = [];",
             "var imagePreviewContainer = null;",
             "",
@@ -1563,6 +1381,7 @@ ${msg}
             "    if (!imagePreviewContainer) {",
             "        imagePreviewContainer = document.createElement('div');",
             "        imagePreviewContainer.id = 'imagePreview';",
+            "        imagePreviewContainer.style.cssText = 'display:flex;gap:6px;padding:6px 12px;background:rgba(0,122,204,0.1);border-top:1px solid rgba(0,122,204,0.2);flex-wrap:wrap;align-items:center;';",
             "        var label = document.createElement('span');",
             "        label.style.cssText = 'color:#666;font-size:11px;';",
             "        label.textContent = '📷 Images :';",
@@ -1581,13 +1400,11 @@ ${msg}
             "        var idx = attachedImages.findIndex(function(x) { return x.base64 === base64; });",
             "        if (idx !== -1) attachedImages.splice(idx, 1);",
             "        wrapper.remove();",
-            "        if (imagePreviewContainer.querySelectorAll('img').length === 0) {",
-            "            imagePreviewContainer.remove();",
-            "            imagePreviewContainer = null;",
+            "        if (imagePreviewContainer && imagePreviewContainer.querySelectorAll('img').length === 0) {",
+            "            imagePreviewContainer.remove(); imagePreviewContainer = null;",
             "        }",
             "    };",
-            "    wrapper.appendChild(img);",
-            "    wrapper.appendChild(removeBtn);",
+            "    wrapper.appendChild(img); wrapper.appendChild(removeBtn);",
             "    imagePreviewContainer.appendChild(wrapper);",
             "}",
             "",
@@ -1598,7 +1415,7 @@ ${msg}
             "        var mimeType = file.type;",
             "        attachedImages.push({ base64: base64, mimeType: mimeType });",
             "        createImagePreview(base64, mimeType);",
-            "        showNotification('📷 Image ajoutée', 'info');",
+            "        showNotification('📷 Image ajoutée (' + attachedImages.length + ')', 'info');",
             "    };",
             "    reader.readAsDataURL(file);",
             "}",
@@ -1607,9 +1424,7 @@ ${msg}
             "    var items = e.clipboardData.items;",
             "    for (var i = 0; i < items.length; i++) {",
             "        if (items[i].type.indexOf('image') !== -1) {",
-            "            e.preventDefault();",
-            "            addImage(items[i].getAsFile());",
-            "            break;",
+            "            e.preventDefault(); addImage(items[i].getAsFile()); break;",
             "        }",
             "    }",
             "});",
@@ -1639,14 +1454,9 @@ ${msg}
             "let thinkModeActive = false;",
             "let userScrolledUp = false;",
             "let _msgCounter = 0;",
-            "let _pendingMsgIdx = -1;",
             "let _allModels = [];",
+            "var notificationContainer = null;",
             "",
-            "// ─── Image paste/drop handling ───",
-            "var attachedImages = [];",
-            "var imagePreviewContainer = null;",
-            "",
-            "// ─── Provider color helper ───",
             "var PROVIDER_COLORS = { local:'#b19cd9', lmstudio:'#74aa9c', gemini:'#7ab4f5', openai:'#74aa9c', openrouter:'#ffb74d', together:'#4dd0e1', mistral:'#ff8a80', groq:'#ffd700', anthropic:'#cc88ff', 'ollama-cloud':'#00d2ff' };",
             "function providerColor(p) { return PROVIDER_COLORS[p] || '#00d2ff'; }",
             "function providerBanner(p, name) {",
@@ -1655,7 +1465,6 @@ ${msg}
             "    return (icons[p]||'☁️')+' <b>'+(labels[p]||'Cloud')+'</b> &mdash; '+name;",
             "}",
             "",
-            "// ─── Custom model combobox ───",
             "var modelComboBox = document.getElementById('modelComboBox');",
             "var modelSearch = document.getElementById('modelSearch');",
             "var modelDropdown = document.getElementById('modelDropdown');",
@@ -1666,11 +1475,8 @@ ${msg}
             "function renderDropdown(filter) {",
             "    _currentFilter = filter || '';",
             "    var f = _currentFilter.toLowerCase().trim();",
-            "    var filtered = f ? _allModels.filter(function(x) {",
-            "        return x.name.toLowerCase().includes(f) || (x.provider||'').toLowerCase().includes(f);",
-            "    }) : _allModels;",
-            "    var listHtml = filtered.length === 0",
-            "        ? '<div class=\"model-opt-empty\">Aucun résultat</div>'",
+            "    var filtered = f ? _allModels.filter(function(x) { return x.name.toLowerCase().includes(f) || (x.provider||'').toLowerCase().includes(f); }) : _allModels;",
+            "    var listHtml = filtered.length === 0 ? '<div class=\"model-opt-empty\">Aucun résultat</div>'",
             "        : filtered.map(function(x, i) {",
             "            var c = providerColor(x.provider);",
             "            var sel = x.value === modelSelect.value ? ' selected' : '';",
@@ -1681,12 +1487,10 @@ ${msg}
             "                '<span class=\"opt-name\" style=\"color:'+c+'\">'+escapeHtml(x.name)+'</span></div>';",
             "        }).join('');",
             "    modelDropdown.innerHTML = '<div id=\"modelDropdownSearch-wrap\"><input id=\"modelDropdownSearch\" placeholder=\"Rechercher…\" autocomplete=\"off\" spellcheck=\"false\"></div><div id=\"modelDropdownList\">'+listHtml+'</div>';",
-            "    // IMPORTANT: set value via JS property, never via HTML attribute (avoids escaping bugs)",
             "    var dSearch = document.getElementById('modelDropdownSearch');",
             "    if (dSearch) {",
             "        dSearch.value = _currentFilter;",
             "        dSearch.focus();",
-            "        // Place cursor at end",
             "        var len = dSearch.value.length;",
             "        dSearch.setSelectionRange(len, len);",
             "        dSearch.addEventListener('input', function() { renderDropdown(dSearch.value); });",
@@ -1714,22 +1518,13 @@ ${msg}
             "    modelSelect.value = val;",
             "    modelSearch.value = found.name;",
             "    modelSearch.style.color = providerColor(found.provider);",
-            "    closeCombo();",
-            "    updateSelectColor();",
+            "    closeCombo(); updateSelectColor();",
             "    vscode.postMessage({ type: 'saveModel', model: val });",
             "}",
             "",
-            "function openCombo() {",
-            "    _comboOpen = true; _activeIdx = -1; _currentFilter = '';",
-            "    modelComboBox.classList.add('open');",
-            "    modelDropdown.classList.add('open');",
-            "    renderDropdown('');",
-            "}",
-            "",
+            "function openCombo() { _comboOpen = true; _activeIdx = -1; _currentFilter = ''; modelComboBox.classList.add('open'); modelDropdown.classList.add('open'); renderDropdown(''); }",
             "function closeCombo() {",
-            "    _comboOpen = false;",
-            "    modelComboBox.classList.remove('open');",
-            "    modelDropdown.classList.remove('open');",
+            "    _comboOpen = false; modelComboBox.classList.remove('open'); modelDropdown.classList.remove('open');",
             "    var found = _allModels.find(function(x) { return x.value === modelSelect.value; });",
             "    if (found) { modelSearch.value = found.name; modelSearch.style.color = providerColor(found.provider); }",
             "}",
@@ -1739,10 +1534,10 @@ ${msg}
             "    e.preventDefault();",
             "    _comboOpen ? closeCombo() : openCombo();",
             "});",
-            "",
             "document.addEventListener('mousedown', function(e) {",
             "    if (_comboOpen && !modelComboBox.contains(e.target) && !modelDropdown.contains(e.target)) closeCombo();",
             "});",
+            "",
             "function renderModelOptions(models, selectedVal) {",
             "    _allModels = models;",
             "    modelSelect.innerHTML = models.map(function(x) {",
@@ -1754,34 +1549,19 @@ ${msg}
             "    updateSelectColor();",
             "}",
             "",
-            "// ─── Scroll lock logic ───",
             "chat.addEventListener('scroll', function() {",
             "    var threshold = 60;",
             "    var atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold;",
             "    userScrolledUp = !atBottom;",
             "    scrollBtn.style.display = userScrolledUp ? 'flex' : 'none';",
             "});",
-            "scrollBtn.onclick = function() {",
-            "    chat.scrollTop = chat.scrollHeight;",
-            "    userScrolledUp = false;",
-            "    scrollBtn.style.display = 'none';",
-            "};",
-            "function smartScroll() {",
-            "    if (!userScrolledUp) chat.scrollTop = chat.scrollHeight;",
-            "}",
+            "scrollBtn.onclick = function() { chat.scrollTop = chat.scrollHeight; userScrolledUp = false; scrollBtn.style.display = 'none'; };",
+            "function smartScroll() { if (!userScrolledUp) chat.scrollTop = chat.scrollHeight; }",
             "",
-            "// ─── Terminal permission select ───",
-            "termPermSelect.onchange = function() {",
-            "    vscode.postMessage({ type: 'setTerminalPermission', value: termPermSelect.value });",
-            "};",
+            "termPermSelect.onchange = function() { vscode.postMessage({ type: 'setTerminalPermission', value: termPermSelect.value }); };",
             "",
-            "// ─── Auto-resize textarea ───",
-            "promptEl.addEventListener('input', function() {",
-            "    promptEl.style.height = 'auto';",
-            "    promptEl.style.height = Math.min(promptEl.scrollHeight, 120) + 'px';",
-            "});",
+            "promptEl.addEventListener('input', function() { promptEl.style.height = 'auto'; promptEl.style.height = Math.min(promptEl.scrollHeight, 120) + 'px'; });",
             "",
-            "// ─── Context file management ───",
             "function addContextFile(name, content) {",
             "    if (contextFiles.find(function(f) { return f.name === name; })) return;",
             "    contextFiles.push({ name: name, content: content });",
@@ -1802,19 +1582,16 @@ ${msg}
             "        el.onclick = function() {",
             "            var idx = parseInt(el.getAttribute('data-idx'));",
             "            vscode.postMessage({ type: 'removeContextFile', name: contextFiles[idx].name });",
-            "            contextFiles.splice(idx, 1);",
-            "            renderFilesBar();",
+            "            contextFiles.splice(idx, 1); renderFilesBar();",
             "        };",
             "    });",
             "}",
             "",
             "function clearAllFiles() {",
             "    contextFiles.forEach(function(f) { vscode.postMessage({ type: 'removeContextFile', name: f.name }); });",
-            "    contextFiles = [];",
-            "    renderFilesBar();",
+            "    contextFiles = []; renderFilesBar();",
             "}",
             "",
-            "// ─── Token budget bar ───",
             "function updateTokenBar(used, max, isCloud) {",
             "    var pct = Math.min(100, Math.round(used / max * 100));",
             "    var color = pct > 85 ? '#ff6b6b' : pct > 60 ? '#ffaa00' : '#00d2ff';",
@@ -1827,7 +1604,6 @@ ${msg}
             "    tokenBar.style.display = 'block';",
             "}",
             "",
-            "// ─── Message helpers ───",
             "function revertToMessage(index) {",
             "    if (confirm('Revenir à ce message ?\\nL\\'historique après ce point sera supprimé.')) {",
             "        vscode.postMessage({ type: 'revertTo', index: index });",
@@ -1837,16 +1613,11 @@ ${msg}
             "function addMsg(txt, cls, isHtml, messageIndex) {",
             "    var d = document.createElement('div');",
             "    d.className = 'msg ' + cls;",
-            "    ",
-            "    // Container pour le contenu + bouton",
             "    var contentWrap = document.createElement('div');",
             "    contentWrap.style.cssText = 'display: flex; flex-direction: column; gap: 6px; width: 100%;';",
-            "    ",
             "    var content = document.createElement('div');",
             "    if (isHtml) { content.innerHTML = txt; } else { content.innerText = txt; }",
             "    contentWrap.appendChild(content);",
-            "    ",
-            "    // Ajouter bouton de revert uniquement pour les messages utilisateur",
             "    if (cls === 'user' && messageIndex !== undefined) {",
             "        var revertBtn = document.createElement('button');",
             "        revertBtn.className = 'msg-revert-btn';",
@@ -1854,16 +1625,13 @@ ${msg}
             "        revertBtn.onclick = function() { revertToMessage(messageIndex); };",
             "        contentWrap.appendChild(revertBtn);",
             "    }",
-            "    ",
             "    d.appendChild(contentWrap);",
             "    chat.appendChild(d);",
             "    smartScroll();",
             "    return d;",
             "}",
             "",
-            "function addStatusMsg(txt) {",
-            "    showNotification(txt, 'info');",
-            "}",
+            "function addStatusMsg(txt) { showNotification(txt, 'info'); }",
             "",
             "function showNotification(message, type) {",
             "    type = type || 'info';",
@@ -1886,48 +1654,30 @@ ${msg}
             "    notificationContainer.appendChild(notif);",
             "    setTimeout(function() {",
             "        notif.style.animation = 'slideOut 0.3s ease';",
-            "        setTimeout(function() { ",
+            "        setTimeout(function() {",
             "            notif.remove();",
-            "            if (notificationContainer && notificationContainer.children.length === 0) {",
-            "                notificationContainer.remove(); notificationContainer = null;",
-            "            }",
+            "            if (notificationContainer && notificationContainer.children.length === 0) { notificationContainer.remove(); notificationContainer = null; }",
             "        }, 300);",
             "    }, 2500);",
             "}",
             "",
-            "function escapeHtml(t) {",
-            "    return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');",
-            "}",
+            "function escapeHtml(t) { return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }",
             "",
-            "// ─── Code registry ───",
             "window._codeRegistry = [];",
-            "function _registerCode(content) {",
-            "    window._codeRegistry.push(content);",
-            "    return window._codeRegistry.length - 1;",
-            "}",
+            "function _registerCode(content) { window._codeRegistry.push(content); return window._codeRegistry.length - 1; }",
             "",
-            "// ─── Markdown renderer ───",
             "function renderMarkdown(text) {",
-            "    var html = '';",
-            "    // PLAN blocks with button",
             "    text = text.replace(/\\[PLAN\\]([\\s\\S]*?)\\[\\/PLAN\\]/g, function(_, plan) {",
             "        var idx = _registerCode(plan);",
-            "        return '<div class=\"msg plan-msg\"><b>🧠 Plan de l\\'IA :</b><br>' + ",
-            "            escapeHtml(plan).replace(/\\n/g,'<br>') + ",
-            "            '<div style=\"margin-top:10px;\"><button class=\"btn-cloud\" style=\"background:#cc88ff;color:#000;border:none;\" onclick=\"startPlanImplementation(' + idx + ')\">🚀 Démarrer l\\'implémentation</button></div>' +",
-            "            '</div>';",
+            "        return '<div class=\"msg plan-msg\"><b>🧠 Plan de l\\'IA :</b><br>' + escapeHtml(plan).replace(/\\n/g,'<br>') + '<div style=\"margin-top:10px;\"><button class=\"btn-cloud\" style=\"background:#cc88ff;color:#000;border:none;\" onclick=\"startPlanImplementation(' + idx + ')\">🚀 Démarrer l\\'implémentation</button></div></div>';",
             "    });",
             "    text = text.replace(/\\[PROJECT_SUMMARY\\][\\s\\S]*?\\[\\/PROJECT_SUMMARY\\]/g, '');",
-            "    // Strip [NEED_FILE:...] and [WILL_MODIFY:...] tags",
             "    text = text.replace(/\\[NEED_FILE:[^\\]]+\\]/g, '');",
             "    text = text.replace(/\\[WILL_MODIFY:[^\\]]+\\]/g, '');",
-            "    // Code blocks with [FILE: name] support",
             "    text = text.replace(/\\[FILE:\\s*([^ \\]\\n]+)(?: [^\\]\\n]+)?\\]\\s*```(\\w+)?\\n([\\s\\S]*?)```/g, function(_, fname, lang, code) {",
-            "        var idx = _registerCode(code);",
-            "        var fidx = _registerCode(fname);",
+            "        var idx = _registerCode(code); var fidx = _registerCode(fname);",
             "        return '<div class=\"code-block patch\"><div class=\"code-header\"><span>📄 '+escapeHtml(fname)+'</span><button onclick=\"applyFilePatch('+idx+','+fidx+')\">✅ Appliquer</button></div><div class=\"code-content\">'+escapeHtml(code)+'</div></div>';",
             "    });",
-            "    // Regular code blocks",
             "    text = text.replace(/```(\\w+)?\\n([\\s\\S]*?)```/g, function(_, lang, code) {",
             "        var idx = _registerCode(code);",
             "        var isPatch = /SEARCH/i.test(code);",
@@ -1937,193 +1687,54 @@ ${msg}
             "        else btns = '<button onclick=\"copyCode('+idx+')\">📋 Copier</button> ' + btns;",
             "        return '<div class=\"code-block '+cls+'\"><div class=\"code-header\"><span>'+(lang||'code')+'</span>'+btns+'</div><div class=\"code-content\">'+escapeHtml(code)+'</div></div>';",
             "    });",
-            "    // Inline formatting",
             "    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');",
             "    text = text.replace(/\\*\\*([^*]+)\\*\\*/g, '<b>$1</b>');",
             "    text = text.replace(/\\*([^*]+)\\*/g, '<i>$1</i>');",
-            "    // Paragraphs",
             "    var paras = text.split('\\n\\n');",
-            "    html = paras.map(function(p) {",
-            "        p = p.trim();",
-            "        if (!p) return '';",
+            "    return paras.map(function(p) {",
+            "        p = p.trim(); if (!p) return '';",
             "        if (p.startsWith('<div')) return p;",
             "        p = p.replace(/\\n/g, '<br>');",
             "        return '<p>' + p + '</p>';",
             "    }).join('');",
-            "    return html;",
             "}",
             "",
-            "function applyCode(idx) {",
-            "    vscode.postMessage({ type: 'applyToActiveFile', value: window._codeRegistry[idx] });",
-            "}",
-            "function applyFilePatch(codeIdx, fileIdx) {",
-            "    var code = window._codeRegistry[codeIdx];",
-            "    var fname = window._codeRegistry[fileIdx];",
-            "    vscode.postMessage({ type: 'applyToActiveFile', value: code, targetFile: fname });",
-            "}",
-            "function copyCode(idx) {",
-            "    navigator.clipboard.writeText(window._codeRegistry[idx]);",
-            "}",
+            "function applyCode(idx) { vscode.postMessage({ type: 'applyToActiveFile', value: window._codeRegistry[idx] }); }",
+            "function applyFilePatch(codeIdx, fileIdx) { vscode.postMessage({ type: 'applyToActiveFile', value: window._codeRegistry[codeIdx], targetFile: window._codeRegistry[fileIdx] }); }",
+            "function copyCode(idx) { navigator.clipboard.writeText(window._codeRegistry[idx]); }",
+            "function startPlanImplementation(idx) { vscode.postMessage({ type: 'injectMessage', value: 'Démarre l\\'implémentation du plan :\\n' + window._codeRegistry[idx] }); }",
             "",
-            "function startPlanImplementation(idx) {",
-            "    var plan = window._codeRegistry[idx];",
-            "    vscode.postMessage({ type: 'injectMessage', value: 'Démarre l\\'implémentation du plan :\\n' + plan });",
-            "}",
-            "",
-            "// ─── Send message ───",
             "var isGenerating = false;",
-            "",
-            "function showStopButton() {",
-            "    isGenerating = true;",
-            "    send.style.display = 'none';",
-            "    document.getElementById('stop').style.display = 'block';",
-            "}",
-            "",
-            "function hideStopButton() {",
-            "    isGenerating = false;",
-            "    send.style.display = 'block';",
-            "    document.getElementById('stop').style.display = 'none';",
-            "}",
-            "",
-            "function createImagePreview(base64, mimeType) {",
-            "    if (!imagePreviewContainer) {",
-            "        imagePreviewContainer = document.createElement('div');",
-            "        imagePreviewContainer.id = 'imagePreview';",
-            "        imagePreviewContainer.style.cssText = 'display:flex;gap:6px;padding:6px 12px;background:rgba(0,122,204,0.1);border-top:1px solid rgba(0,122,204,0.2);flex-wrap:wrap;align-items:center;';",
-            "        var label = document.createElement('span');",
-            "        label.style.cssText = 'color:#666;font-size:11px;';",
-            "        label.textContent = '📷 Images :';",
-            "        imagePreviewContainer.appendChild(label);",
-            "        document.querySelector('.input-area').insertBefore(imagePreviewContainer, document.querySelector('.input-row'));",
-            "    }",
-            "    var wrapper = document.createElement('div');",
-            "    wrapper.style.cssText = 'position:relative;width:60px;height:60px;border-radius:6px;overflow:hidden;border:1px solid rgba(0,210,255,0.3);';",
-            "    var img = document.createElement('img');",
-            "    img.src = 'data:'+mimeType+';base64,'+base64;",
-            "    img.style.cssText = 'width:100%;height:100%;object-fit:cover;';",
-            "    var removeBtn = document.createElement('button');",
-            "    removeBtn.innerHTML = '×';",
-            "    removeBtn.style.cssText = 'position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:rgba(255,80,80,0.9);color:#fff;border:none;cursor:pointer;font-size:14px;line-height:1;padding:0;';",
-            "    removeBtn.onclick = function() {",
-            "        var idx = attachedImages.findIndex(function(x) { return x.base64 === base64; });",
-            "        if (idx !== -1) attachedImages.splice(idx, 1);",
-            "        wrapper.remove();",
-            "        if (imagePreviewContainer && imagePreviewContainer.querySelectorAll('img').length === 0) {",
-            "            imagePreviewContainer.remove();",
-            "            imagePreviewContainer = null;",
-            "        }",
-            "    };",
-            "    wrapper.appendChild(img);",
-            "    wrapper.appendChild(removeBtn);",
-            "    imagePreviewContainer.appendChild(wrapper);",
-            "}",
-            "",
-            "function addImage(file) {",
-            "    var reader = new FileReader();",
-            "    reader.onload = function(e) {",
-            "        var base64 = e.target.result.split(',')[1];",
-            "        var mimeType = file.type;",
-            "        attachedImages.push({ base64: base64, mimeType: mimeType });",
-            "        createImagePreview(base64, mimeType);",
-            "        showNotification('📷 Image ajoutée (' + attachedImages.length + ')', 'info');",
-            "    };",
-            "    reader.readAsDataURL(file);",
-            "}",
-            "",
-            "promptEl.addEventListener('paste', function(e) {",
-            "    var items = e.clipboardData.items;",
-            "    for (var i = 0; i < items.length; i++) {",
-            "        if (items[i].type.indexOf('image') !== -1) {",
-            "            e.preventDefault();",
-            "            var file = items[i].getAsFile();",
-            "            addImage(file);",
-            "            break;",
-            "        }",
-            "    }",
-            "});",
-            "",
-            "var inputArea = document.querySelector('.input-area');",
-            "inputArea.addEventListener('drop', function(e) {",
-            "    e.preventDefault(); e.stopPropagation();",
-            "    if (e.dataTransfer.files.length > 0) {",
-            "        for (var i = 0; i < e.dataTransfer.files.length; i++) {",
-            "            var file = e.dataTransfer.files[i];",
-            "            if (file.type.indexOf('image') !== -1) { addImage(file); }",
-            "        }",
-            "    }",
-            "});",
-            "inputArea.addEventListener('dragover', function(e) {",
-            "    e.preventDefault(); e.stopPropagation();",
-            "    inputArea.style.background = 'rgba(0,210,255,0.05)';",
-            "});",
-            "inputArea.addEventListener('dragleave', function(e) {",
-            "    e.preventDefault(); e.stopPropagation();",
-            "    inputArea.style.background = '';",
-            "});",
+            "function showStopButton() { isGenerating = true; send.style.display = 'none'; document.getElementById('stop').style.display = 'block'; }",
+            "function hideStopButton() { isGenerating = false; send.style.display = 'block'; document.getElementById('stop').style.display = 'none'; }",
             "",
             "function sendMessage() {",
             "    var val = promptEl.value.trim();",
             "    if (!val || isGenerating) return;",
-            "    var msgIdx = _msgCounter;",
-            "    _msgCounter += 2;",
+            "    var msgIdx = _msgCounter; _msgCounter += 2;",
             "    addMsg(val, 'user', false, msgIdx);",
             "    showStopButton();",
             "    var selectedOpt = modelSelect.options[modelSelect.selectedIndex];",
             "    var modelVal = modelSelect.value;",
             "    var modelUrl = selectedOpt ? (selectedOpt.getAttribute('data-url') || '') : '';",
-            "    vscode.postMessage({",
-            "        type: 'sendMessage',",
-            "        value: val,",
-            "        model: modelVal,",
-            "        url: modelUrl,",
-            "        contextFiles: contextFiles,",
-            "        thinkMode: thinkModeActive,",
-            "        images: attachedImages",
-            "    });",
-            "    promptEl.value = '';",
-            "    promptEl.style.height = 'auto';",
+            "    vscode.postMessage({ type: 'sendMessage', value: val, model: modelVal, url: modelUrl, contextFiles: contextFiles, thinkMode: thinkModeActive, images: attachedImages });",
+            "    promptEl.value = ''; promptEl.style.height = 'auto';",
             "    attachedImages = [];",
-            "    if (imagePreviewContainer) {",
-            "        imagePreviewContainer.remove();",
-            "        imagePreviewContainer = null;",
-            "    }",
+            "    if (imagePreviewContainer) { imagePreviewContainer.remove(); imagePreviewContainer = null; }",
             "}",
             "",
             "send.onclick = sendMessage;",
-            "document.getElementById('stop').onclick = function() {",
-            "    vscode.postMessage({ type: 'stopGeneration' });",
-            "    hideStopButton();",
-            "};",
-            "promptEl.addEventListener('keydown', function(e) {",
-            "    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }",
-            "});",
+            "document.getElementById('stop').onclick = function() { vscode.postMessage({ type: 'stopGeneration' }); hideStopButton(); };",
+            "promptEl.addEventListener('keydown', function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });",
             "",
-            "// ─── Action buttons ───",
-            "document.getElementById('btnAddFile').onclick = function() {",
-            "    vscode.postMessage({ type: 'requestFileAccess', target: 'picker' });",
-            "};",
-            "document.getElementById('btnRelatedFiles').onclick = function() {",
-            "    vscode.postMessage({ type: 'addRelatedFiles' });",
-            "};",
-            "document.getElementById('btnThink').onclick = function() {",
-            "    vscode.postMessage({ type: 'toggleThinkMode' });",
-            "};",
-            "document.getElementById('btnCloud').onclick = function() {",
-            "    vscode.postMessage({ type: 'openCloudConnect' });",
-            "};",
-            "document.getElementById('btnClearHistory').onclick = function() {",
-            "    if (confirm('Effacer l\\'historique ?')) {",
-            "        vscode.postMessage({ type: 'clearHistory' });",
-            "        chat.innerHTML = '';",
-            "    }",
-            "};",
-            "document.getElementById('btnLsp').onclick = function() {",
-            "    vscode.postMessage({ type: 'getLspDiagnostics', scope: 'workspace' });",
-            "};",
+            "document.getElementById('btnAddFile').onclick = function() { vscode.postMessage({ type: 'requestFileAccess', target: 'picker' }); };",
+            "document.getElementById('btnRelatedFiles').onclick = function() { vscode.postMessage({ type: 'addRelatedFiles' }); };",
+            "document.getElementById('btnThink').onclick = function() { vscode.postMessage({ type: 'toggleThinkMode' }); };",
+            "document.getElementById('btnCloud').onclick = function() { vscode.postMessage({ type: 'openCloudConnect' }); };",
+            "document.getElementById('btnClearHistory').onclick = function() { if (confirm('Effacer l\\'historique ?')) { vscode.postMessage({ type: 'clearHistory' }); chat.innerHTML = ''; } };",
+            "document.getElementById('btnLsp').onclick = function() { vscode.postMessage({ type: 'getLspDiagnostics', scope: 'workspace' }); };",
             "var _lspWatchActive = false;",
-            "document.getElementById('btnLspWatch').onclick = function() {",
-            "    vscode.postMessage({ type: 'toggleLspWatch' });",
-            "};",
+            "document.getElementById('btnLspWatch').onclick = function() { vscode.postMessage({ type: 'toggleLspWatch' }); };",
             "document.getElementById('btnAgent').onclick = function() {",
             "    if (_agentRunning) { vscode.postMessage({ type: 'stopAgent' }); return; }",
             "    var goal = promptEl.value.trim();",
@@ -2139,74 +1750,41 @@ ${msg}
             "    document.getElementById('lspPanel').style.display = 'none';",
             "    promptEl.focus();",
             "}",
-            "document.getElementById('btnGitReview').onclick = function() {",
-            "    vscode.postMessage({ type: 'reviewDiff' });",
-            "};",
-            "document.getElementById('btnCommit').onclick = function() {",
-            "    vscode.postMessage({ type: 'generateCommitMessage' });",
-            "};",
-            "document.getElementById('btnTests').onclick = function() {",
-            "    vscode.postMessage({ type: 'generateTests' });",
-            "};",
+            "document.getElementById('btnGitReview').onclick = function() { vscode.postMessage({ type: 'reviewDiff' }); };",
+            "document.getElementById('btnCommit').onclick = function() { vscode.postMessage({ type: 'generateCommitMessage' }); };",
+            "document.getElementById('btnTests').onclick = function() { vscode.postMessage({ type: 'generateTests' }); };",
             "document.getElementById('btnError').onclick = function() {",
             "    var err = promptEl.value.trim();",
-            "    if (!err) {",
-            "        var inp = window.prompt('Coller votre erreur / stack trace :');",
-            "        if (!inp) return;",
-            "        err = inp;",
-            "    }",
-            "    vscode.postMessage({ type: 'analyzeError', value: err });",
-            "    promptEl.value = '';",
+            "    if (!err) { var inp = window.prompt('Coller votre erreur / stack trace :'); if (!inp) return; err = inp; }",
+            "    vscode.postMessage({ type: 'analyzeError', value: err }); promptEl.value = '';",
             "};",
             "",
-            "// ─── Model select (hidden, used for value tracking) ───",
             "function updateSelectColor() {",
             "    var val = modelSelect.value;",
             "    var found = _allModels.find(function(x) { return x.value === val; });",
             "    var provider = found ? (found.provider || 'ollama-cloud') : '';",
             "    var warn = document.getElementById('localWarn');",
-            "    if (!val || !found) {",
-            "        warn.style.cssText = ''; warn.className = 'offline';",
-            "        warn.innerHTML = '⚠️ Ollama hors ligne'; warn.style.display = 'block';",
-            "    } else {",
-            "        warn.className = provider;",
-            "        warn.innerHTML = providerBanner(provider, found.name);",
-            "        warn.style.display = 'block';",
-            "    }",
+            "    if (!val || !found) { warn.style.cssText = ''; warn.className = 'offline'; warn.innerHTML = '⚠️ Ollama hors ligne'; warn.style.display = 'block'; }",
+            "    else { warn.className = provider; warn.innerHTML = providerBanner(provider, found.name); warn.style.display = 'block'; }",
             "    vscode.postMessage({ type: 'getTokenBudget' });",
             "}",
-            "modelSelect.onchange = function() {",
-            "    updateSelectColor();",
-            "    vscode.postMessage({ type: 'saveModel', model: modelSelect.value });",
-            "};",
+            "modelSelect.onchange = function() { updateSelectColor(); vscode.postMessage({ type: 'saveModel', model: modelSelect.value }); };",
             "",
-            "// ─── Message handler ───",
             "window.addEventListener('message', function(e) {",
             "    var m = e.data;",
             "    if (m.type === 'setModels') {",
-            "        if (m.models && m.models.length > 0) {",
-            "            _allModels = m.models;",
-            "            renderModelOptions(m.models, m.selected);",
-            "        } else {",
-            "            _allModels = [];",
-            "            modelSelect.innerHTML = '<option value=\"\" data-name=\"\" data-url=\"\" data-provider=\"\" style=\"color:#ff6b6b\">⚠️ Ollama hors ligne</option>';",
-            "            updateSelectColor();",
-            "        }",
+            "        if (m.models && m.models.length > 0) { _allModels = m.models; renderModelOptions(m.models, m.selected); }",
+            "        else { _allModels = []; modelSelect.innerHTML = '<option value=\"\" style=\"color:#ff6b6b\">⚠️ Ollama hors ligne</option>'; updateSelectColor(); }",
             "    }",
             "    if (m.type === 'startResponse') {",
             "        showStopButton();",
-            "        currentAiMsg = document.createElement('div');",
-            "        currentAiMsg.className = 'msg ai';",
+            "        currentAiMsg = document.createElement('div'); currentAiMsg.className = 'msg ai';",
             "        currentAiMsg.innerHTML = '<div class=\"thinking\"><span></span><span></span><span></span></div>';",
-            "        chat.appendChild(currentAiMsg);",
-            "        chat.scrollTop = chat.scrollHeight;",
-            "        currentAiText = '';",
+            "        chat.appendChild(currentAiMsg); chat.scrollTop = chat.scrollHeight; currentAiText = '';",
             "    }",
             "    if (m.type === 'partialResponse') {",
             "        if (!currentAiMsg) { currentAiMsg = addMsg('', 'ai', true); }",
-            "        currentAiText += m.value;",
-            "        currentAiMsg.innerHTML = renderMarkdown(currentAiText);",
-            "        smartScroll();",
+            "        currentAiText += m.value; currentAiMsg.innerHTML = renderMarkdown(currentAiText); smartScroll();",
             "    }",
             "    if (m.type === 'endResponse') {",
             "        hideStopButton();",
@@ -2217,20 +1795,14 @@ ${msg}
             "    }",
             "    if (m.type === 'fileContent') { addContextFile(m.name, m.content); }",
             "    if (m.type === 'injectMessage') {",
-            "        promptEl.value = m.value;",
-            "        promptEl.style.height = 'auto';",
-            "        promptEl.style.height = Math.min(promptEl.scrollHeight, 120) + 'px';",
-            "        promptEl.focus();",
+            "        promptEl.value = m.value; promptEl.style.height = 'auto';",
+            "        promptEl.style.height = Math.min(promptEl.scrollHeight, 120) + 'px'; promptEl.focus();",
             "    }",
             "    if (m.type === 'restoreHistory' && m.history) {",
-            "        chat.innerHTML = '';",
-            "        _msgCounter = 0;",
+            "        chat.innerHTML = ''; _msgCounter = 0;",
             "        m.history.forEach(function(msg, index) {",
-            "            if (msg.role === 'user') {",
-            "                addMsg(msg.value, 'user', false, index);",
-            "            } else {",
-            "                addMsg(renderMarkdown(msg.value), 'ai', true);",
-            "            }",
+            "            if (msg.role === 'user') { addMsg(msg.value, 'user', false, index); }",
+            "            else { addMsg(renderMarkdown(msg.value), 'ai', true); }",
             "        });",
             "        _msgCounter = m.history.length;",
             "    }",
@@ -2241,42 +1813,28 @@ ${msg}
             "        btn.style.background = m.active ? 'rgba(160,0,255,0.25)' : '';",
             "        btn.style.borderColor = m.active ? '#a000ff' : '';",
             "        btn.style.color = m.active ? '#cc88ff' : '';",
-            "        btn.title = m.active ? 'Mode Réflexion ACTIF (cliquer pour désactiver)' : 'Activer le Mode Réflexion';",
             "    }",
             "    if (m.type === 'tokenBudget') { updateTokenBar(m.used, m.max, m.isCloud); }",
-            "    if (m.type === 'notification') {",
-            "        showNotification(m.message, m.notificationType);",
-            "    }",
-            "    if (m.type === 'patchSummary') {",
-            "        showNotification(m.summary, 'success');",
-            "    }",
+            "    if (m.type === 'notification') { showNotification(m.message, m.notificationType); }",
             "    if (m.type === 'terminalCommand') {",
             "        terminalLog.style.display = 'block';",
-            "        var line = document.createElement('div');",
-            "        line.className = 'cmd-line';",
+            "        var line = document.createElement('div'); line.className = 'cmd-line';",
             "        var badge = m.status === 'refused' ? 'refused' : (m.status === 'auto' ? 'auto' : 'accepted');",
             "        var label = m.status === 'refused' ? 'refusé' : (m.status === 'auto' ? 'auto' : 'ok');",
             "        line.innerHTML = '<span class=\"cmd-badge '+badge+'\">'+label+'</span><span class=\"cmd-text\">$ '+escapeHtml(m.cmd)+'</span>';",
-            "        terminalLog.appendChild(line);",
-            "        terminalLog.scrollTop = terminalLog.scrollHeight;",
+            "        terminalLog.appendChild(line); terminalLog.scrollTop = terminalLog.scrollHeight;",
             "        if (terminalLog.children.length > 20) terminalLog.removeChild(terminalLog.firstChild);",
             "    }",
-            "    if (m.type === 'setTerminalPermission') {",
-            "        termPermSelect.value = m.value || 'ask-all';",
-            "    }",
+            "    if (m.type === 'setTerminalPermission') { termPermSelect.value = m.value || 'ask-all'; }",
             "    if (m.type === 'lspDiagnostics') {",
             "        var panel = document.getElementById('lspPanel');",
             "        var content = document.getElementById('lspContent');",
             "        var summary = document.getElementById('lspSummary');",
             "        _currentLspFormatted = m.report.formatted;",
             "        summary.innerHTML = (m.report.errorCount > 0 ? '🔴' : '🟡') + ' ' + escapeHtml(m.report.summary);",
-            "        content.textContent = m.report.formatted;",
-            "        panel.style.display = 'block';",
+            "        content.textContent = m.report.formatted; panel.style.display = 'block';",
             "    }",
-            "    if (m.type === 'lspAutoReport') {",
-            "        showNotification('🔴 ' + m.summary, 'error');",
-            "        _currentLspFormatted = m.formatted;",
-            "    }",
+            "    if (m.type === 'lspAutoReport') { showNotification('🔴 ' + m.summary, 'error'); _currentLspFormatted = m.formatted; }",
             "    if (m.type === 'lspWatchToggled') {",
             "        _lspWatchActive = m.active;",
             "        var btn = document.getElementById('btnLspWatch');",
@@ -2289,9 +1847,7 @@ ${msg}
             "        var panel = document.getElementById('agentPanel');",
             "        var steps = document.getElementById('agentSteps');",
             "        var label = document.getElementById('agentGoalLabel');",
-            "        label.textContent = '🤖 ' + m.goal;",
-            "        steps.innerHTML = '';",
-            "        panel.style.display = 'block';",
+            "        label.textContent = '🤖 ' + m.goal; steps.innerHTML = ''; panel.style.display = 'block';",
             "        var btn = document.getElementById('btnAgent');",
             "        btn.textContent = '⏹ Stop'; btn.style.background = 'rgba(255,80,80,0.2)';",
             "        btn.style.borderColor = 'rgba(255,80,80,0.5)'; btn.style.color = '#ff8888';",
@@ -2300,12 +1856,7 @@ ${msg}
             "        var stepIcons = { think:'💭', read_file:'📖', write_file:'✏️', run_command:'💻', fix_diagnostics:'🔍', done:'✅', error:'❌' };",
             "        var icon = stepIcons[m.stepType] || '▸';",
             "        var existing = document.getElementById('agent-step-'+m.stepId);",
-            "        if (!existing) {",
-            "            existing = document.createElement('div');",
-            "            existing.id = 'agent-step-'+m.stepId;",
-            "            existing.className = 'agent-step';",
-            "            document.getElementById('agentSteps').appendChild(existing);",
-            "        }",
+            "        if (!existing) { existing = document.createElement('div'); existing.id = 'agent-step-'+m.stepId; existing.className = 'agent-step'; document.getElementById('agentSteps').appendChild(existing); }",
             "        var dur = m.durationMs ? '<span class=\"agent-step-dur\">('+Math.round(m.durationMs/100)/10+'s)</span>' : '';",
             "        var out = m.output ? '<div class=\"agent-step-out\">'+escapeHtml(m.output.substring(0,120))+'</div>' : '';",
             "        existing.className = 'agent-step step-'+m.status;",
@@ -2316,23 +1867,15 @@ ${msg}
             "        _agentRunning = false;",
             "        var btn = document.getElementById('btnAgent');",
             "        btn.textContent = '🤖 Agent'; btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';",
-            "        var type = m.type === 'agentDone' ? 'success' : 'error';",
-            "        var icon = m.type === 'agentDone' ? '✅' : '❌';",
-            "        var msg = icon + ' Agent terminé — ' + (m.summary || m.reason || 'arrêté');",
-            "        showNotification(msg, type);",
+            "        showNotification((m.type === 'agentDone' ? '✅' : '❌') + ' Agent terminé — ' + (m.summary || m.reason || 'arrêté'), m.type === 'agentDone' ? 'success' : 'error');",
             "    }",
-            "    if (m.type === 'agentLog') {",
-            "        showNotification(m.message, 'info');",
-            "    }",
+            "    if (m.type === 'agentLog') { showNotification(m.message, 'info'); }",
             "    if (m.type === 'showPlan') {",
-            "        var planEl = document.createElement('div');",
-            "        planEl.className = 'msg plan-msg';",
+            "        var planEl = document.createElement('div'); planEl.className = 'msg plan-msg';",
             "        planEl.innerHTML = '<b>🧠 Plan de l\\'IA :</b><br>' + escapeHtml(m.plan).replace(/\\n/g,'<br>');",
-            "        chat.appendChild(planEl);",
-            "        chat.scrollTop = chat.scrollHeight;",
+            "        chat.appendChild(planEl); chat.scrollTop = chat.scrollHeight;",
             "    }",
             "    if (m.type === 'updateContextFiles') {",
-            "        // Sync context files from backend (e.g. auto-detected related files)",
             "        m.files.forEach(function(f) {",
             "            if (!contextFiles.find(function(cf) { return cf.name === f.name; })) {",
             "                contextFiles.push({ name: f.name, content: '...', tokens: f.tokens });",
@@ -2347,7 +1890,8 @@ ${msg}
             "vscode.postMessage({ type: 'getTokenBudget' });",
             "vscode.postMessage({ type: 'getTerminalPermission' });",
             "var _currentLspFormatted = '';",
-            "var _agentRunning = false;"
+            "var _agentRunning = false;",
+            `var _showOnboarding = ${showOnboarding};`
         ].join("\n");
 
         return `<!DOCTYPE html>
@@ -2366,7 +1910,6 @@ ${msg}
         .btn-cloud { background: none; border: 1px solid #00d2ff; color: #00d2ff; padding: 4px 10px; font-size: 11px; border-radius: 20px; cursor: pointer; font-weight: 700; transition: all 0.2s; }
         .btn-cloud:hover { background: rgba(0,210,255,0.15); }
         select#modelSelect { display: none; }
-        /* ── Custom model combobox ── */
         #modelComboWrap { position: relative; min-width: 155px; max-width: 180px; }
         #modelComboBox { display: flex; align-items: center; background: #0a0a1a; border: 1px solid #333; border-radius: 6px; padding: 0 8px; gap: 4px; cursor: pointer; transition: border-color 0.2s; height: 28px; }
         #modelComboBox:focus-within, #modelComboBox.open { border-color: rgba(0,210,255,0.5); box-shadow: 0 0 0 2px rgba(0,210,255,0.08); }
@@ -2379,7 +1922,6 @@ ${msg}
         #modelDropdownSearch-wrap { padding: 6px 8px; border-bottom: 1px solid #1e1e30; background: rgba(0,0,0,0.3); }
         #modelDropdownSearch { background: rgba(255,255,255,0.06); border: 1px solid #2a2a3a; border-radius: 5px; color: #e0e0e0; padding: 5px 9px; font-size: 11px; font-family: 'Inter', sans-serif; outline: none; width: 100%; transition: border-color 0.2s; }
         #modelDropdownSearch:focus { border-color: rgba(0,210,255,0.4); }
-        #modelDropdownSearch::placeholder { color: #444; }
         #modelDropdownList { overflow-y: auto; max-height: 220px; }
         #modelDropdownList::-webkit-scrollbar { width: 4px; }
         #modelDropdownList::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
@@ -2389,7 +1931,6 @@ ${msg}
         .model-opt .opt-icon { flex-shrink: 0; width: 14px; text-align: center; }
         .model-opt .opt-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
         .model-opt-empty { padding: 10px 12px; font-size: 11px; color: #555; text-align: center; }
-        /* ── Provider-aware localWarn ── */
         #localWarn.gemini    { background: rgba(66,133,244,0.1);  color: #7ab4f5;  border-color: rgba(66,133,244,0.3); }
         #localWarn.openai    { background: rgba(116,170,156,0.1); color: #74aa9c;  border-color: rgba(116,170,156,0.3); }
         #localWarn.openrouter{ background: rgba(255,152,0,0.1);   color: #ffb74d;  border-color: rgba(255,152,0,0.3); }
@@ -2414,7 +1955,6 @@ ${msg}
         .ai b { color: #fff; }
         .ai code { background: #1a1a2e; color: #00d2ff; padding: 2px 5px; border-radius: 4px; font-family: 'Fira Code', monospace; font-size: 11px; }
         .plan-msg { background: rgba(120,0,255,0.12); border: 1px solid rgba(160,0,255,0.3); border-radius: 10px; padding: 10px 14px; align-self: flex-start; width: 100%; font-size: 12px; color: #cc88ff; }
-        .status-msg { align-self: center; font-size: 11px; color: #888; padding: 4px 12px; background: rgba(255,255,255,0.05); border-radius: 20px; border: 1px solid #333; }
         .code-block { background: #0d0d1a; border: 1px solid #2a2a3a; border-radius: 8px; margin: 10px 0; overflow: hidden; }
         .code-header { background: #141424; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #888; border-bottom: 1px solid #2a2a3a; gap: 6px; }
         .code-header span { flex: 1; }
@@ -2429,11 +1969,10 @@ ${msg}
         #prompt:focus { border-color: rgba(0,210,255,0.5); }
         #send { background: #007acc; color: #fff; border: none; padding: 10px 18px; border-radius: 22px; cursor: pointer; font-weight: 700; font-size: 13px; white-space: nowrap; transition: background 0.2s; }
         #send:hover { background: #0090e0; }
-        #stop { background: #ff6b6b; color: #fff; border: none; padding: 10px 18px; border-radius: 22px; cursor: pointer; font-weight: 700; font-size: 13px; white-space: nowrap; transition: background 0.2s; font-family: 'Inter', sans-serif; }
+        #stop { background: #ff6b6b; color: #fff; border: none; padding: 10px 18px; border-radius: 22px; cursor: pointer; font-weight: 700; font-size: 13px; white-space: nowrap; font-family: 'Inter', sans-serif; }
         #stop:hover { background: #ff5252; }
-        /* ── Message revert button ── */
-        .msg-revert-btn { align-self: flex-start; background: rgba(100, 100, 255, 0.08); border: 1px solid rgba(100, 100, 255, 0.25); color: #7a8fff; padding: 4px 10px; border-radius: 10px; font-size: 11px; cursor: pointer; transition: all 0.2s; margin-top: 4px; font-family: 'Inter', sans-serif; font-weight: 500; }
-        .msg-revert-btn:hover { background: rgba(100, 100, 255, 0.15); border-color: rgba(100, 100, 255, 0.4); color: #9bb0ff; }
+        .msg-revert-btn { align-self: flex-start; background: rgba(100,100,255,0.08); border: 1px solid rgba(100,100,255,0.25); color: #7a8fff; padding: 4px 10px; border-radius: 10px; font-size: 11px; cursor: pointer; transition: all 0.2s; margin-top: 4px; font-family: 'Inter', sans-serif; font-weight: 500; }
+        .msg-revert-btn:hover { background: rgba(100,100,255,0.15); border-color: rgba(100,100,255,0.4); color: #9bb0ff; }
         .input-actions { display: flex; gap: 6px; flex-wrap: wrap; }
         .btn-action { background: rgba(255,255,255,0.06); color: #aaa; border: 1px solid #333; padding: 4px 10px; border-radius: 12px; cursor: pointer; font-size: 11px; transition: all 0.2s; white-space: nowrap; }
         .btn-action:hover { background: rgba(255,255,255,0.12); color: #fff; }
@@ -2442,53 +1981,16 @@ ${msg}
         .thinking span:nth-child(2) { animation-delay: 0.2s; } .thinking span:nth-child(3) { animation-delay: 0.4s; }
         @keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-8px)} }
         button { font-family: 'Inter', sans-serif; }
-        /* ── Patch summary ── */
-        .patch-summary {
-            align-self: flex-start;
-            width: 100%;
-            background: rgba(0,200,100,0.08);
-            border: 1px solid rgba(0,200,100,0.25);
-            border-radius: 10px;
-            padding: 10px 14px;
-            font-size: 12px;
-            color: #6debb0;
-            margin-top: 2px;
-            line-height: 1.6;
-        }
-        .patch-summary b { color: #a0ffcc; }
-
-        /* ── Notifications animations ── */
-        @keyframes slideIn {
-            from { transform: translateX(400px); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-        @keyframes slideOut {
-            from { transform: translateX(0); opacity: 1; }
-            to { transform: translateX(400px); opacity: 0; }
-        }
-
-        /* ── Image preview area ── */
-        #imagePreview {
-            display: flex;
-            gap: 6px;
-            padding: 6px 12px;
-            background: rgba(0,122,204,0.1);
-            border-top: 1px solid rgba(0,122,204,0.2);
-            flex-wrap: wrap;
-            align-items: center;
-        }
-
-        /* ── Terminal log ── */
+        @keyframes slideIn { from { transform: translateX(400px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes slideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(400px); opacity: 0; } }
         #terminalLog { display: none; background: rgba(0,0,0,0.5); border-top: 1px solid rgba(0,210,255,0.1); padding: 4px 12px; font-family: 'Fira Code', monospace; font-size: 11px; color: #888; max-height: 80px; overflow-y: auto; flex-shrink: 0; }
         #terminalLog .cmd-line { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
-        #terminalLog .cmd-line .cmd-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }
-        #terminalLog .cmd-line .cmd-badge.accepted { background: rgba(0,200,100,0.2); color: #6debb0; border: 1px solid rgba(0,200,100,0.3); }
-        #terminalLog .cmd-line .cmd-badge.refused { background: rgba(255,80,80,0.15); color: #ff8888; border: 1px solid rgba(255,80,80,0.3); }
-        #terminalLog .cmd-line .cmd-badge.auto { background: rgba(0,210,255,0.15); color: #00d2ff; border: 1px solid rgba(0,210,255,0.25); }
+        #terminalLog .cmd-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }
+        #terminalLog .cmd-badge.accepted { background: rgba(0,200,100,0.2); color: #6debb0; border: 1px solid rgba(0,200,100,0.3); }
+        #terminalLog .cmd-badge.refused { background: rgba(255,80,80,0.15); color: #ff8888; border: 1px solid rgba(255,80,80,0.3); }
+        #terminalLog .cmd-badge.auto { background: rgba(0,210,255,0.15); color: #00d2ff; border: 1px solid rgba(0,210,255,0.25); }
         #terminalLog .cmd-text { color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        /* ── Terminal permission select ── */
         #termPermSelect { background: rgba(20,20,40,0.8); color: #aaa; border: 1px solid #333; border-radius: 12px; padding: 3px 8px; font-size: 10px; cursor: pointer; outline: none; font-family: 'Inter', sans-serif; }
-        /* ── Agent panel ── */
         #agentPanel { background: rgba(0,0,0,0.55); border-top: 1px solid rgba(120,0,255,0.3); padding: 6px 10px; font-size: 11px; max-height: 160px; overflow-y: auto; flex-shrink: 0; }
         #agentHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; color: #cc88ff; font-weight: 700; }
         #agentHeader button { background: rgba(255,80,80,0.15); border: 1px solid rgba(255,80,80,0.3); color: #ff8888; padding: 2px 8px; border-radius: 8px; cursor: pointer; font-size: 10px; }
@@ -2501,15 +2003,12 @@ ${msg}
         .step-running .agent-step-desc { color: #00d2ff; }
         .step-done .agent-step-desc { color: #6debb0; }
         .step-failed .agent-step-desc { color: #ff8888; }
-        /* ── LSP panel ── */
         #lspPanel { background: rgba(0,0,0,0.55); border-top: 1px solid rgba(255,80,80,0.3); padding: 6px 10px; font-size: 11px; max-height: 180px; overflow-y: auto; flex-shrink: 0; }
         #lspHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; color: #ff8888; font-weight: 700; }
         #lspHeader button { background: none; border: none; color: #666; cursor: pointer; font-size: 13px; }
         #lspContent { font-family: 'Fira Code', monospace; font-size: 10px; color: #ccc; white-space: pre-wrap; line-height: 1.6; }
         #lspActions { margin-top: 6px; display: flex; gap: 6px; }
         #lspActions button { background: rgba(0,122,204,0.25); border: 1px solid rgba(0,122,204,0.4); color: #6cb6ff; padding: 3px 10px; border-radius: 8px; cursor: pointer; font-size: 11px; }
-        #lspActions button:hover { background: rgba(0,122,204,0.45); }
-        /* ── Scroll-to-bottom FAB ── */
         #scrollBtn { display: none; position: absolute; bottom: 14px; right: 14px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,210,255,0.2); border: 1px solid rgba(0,210,255,0.4); color: #00d2ff; font-size: 16px; cursor: pointer; align-items: center; justify-content: center; transition: all 0.2s; z-index: 10; }
         #scrollBtn:hover { background: rgba(0,210,255,0.35); }
         #chatWrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
@@ -2561,13 +2060,13 @@ ${msg}
         <div class="input-actions">
             <button class="btn-action" id="btnAddFile" title="Ajouter un fichier au contexte">📎 Fichier</button>
             <button class="btn-action" id="btnRelatedFiles" title="Ajouter les fichiers importés du fichier actif">🔗 Liés</button>
-            <button class="btn-action" id="btnThink" title="Mode Réflexion : l'IA planifie avant d'agir">🧠 Réflexion</button>
-            <button class="btn-action" id="btnError" title="Analyser une erreur avec détection auto de fichier">🐛 Erreur</button>
-            <button class="btn-action" id="btnGitReview" title="Revue du diff Git actuel">📝 Diff</button>
+            <button class="btn-action" id="btnThink" title="Mode Réflexion">🧠 Réflexion</button>
+            <button class="btn-action" id="btnError" title="Analyser une erreur">🐛 Erreur</button>
+            <button class="btn-action" id="btnGitReview" title="Revue du diff Git">📝 Diff</button>
             <button class="btn-action" id="btnCommit" title="Générer un message de commit">💾 Commit</button>
             <button class="btn-action" id="btnTests" title="Générer les tests du fichier actif">🧪 Tests</button>
             <button class="btn-action" id="btnClearHistory" title="Effacer l'historique">🗑 Vider</button>
-            <button class="btn-action" id="btnLsp" title="Analyser les erreurs LSP/TypeScript actuelles">🔴 LSP</button>
+            <button class="btn-action" id="btnLsp" title="Analyser les erreurs LSP">🔴 LSP</button>
             <button class="btn-action" id="btnLspWatch" title="Surveiller les erreurs en temps réel">👁 Veille</button>
             <button class="btn-action" id="btnAgent" title="Lancer l'agent autonome IA">🤖 Agent</button>
             <select id="termPermSelect" title="Permissions terminal IA">
@@ -2583,6 +2082,218 @@ ${msg}
         </div>
     </div>
     <script>${script}</script>
+    <style>
+        #onboardingOverlay {
+            display: none;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.92);
+            backdrop-filter: blur(6px);
+            z-index: 10000;
+            align-items: center; justify-content: center;
+        }
+        #onboardingCard {
+            background: linear-gradient(145deg, #080814 0%, #0d0d22 60%, #0a0a18 100%);
+            width: 92%; max-width: 420px;
+            border-radius: 20px;
+            padding: 0;
+            box-shadow: 0 0 80px rgba(0,210,255,0.15), 0 0 0 1px rgba(0,210,255,0.12);
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+        }
+        .ob-header {
+            padding: 22px 24px 18px;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
+            background: linear-gradient(135deg, rgba(0,210,255,0.06) 0%, rgba(120,0,255,0.04) 100%);
+        }
+        .ob-brand { font-size: 11px; font-weight: 800; letter-spacing: 3px; color: rgba(0,210,255,0.5); text-transform: uppercase; margin-bottom: 6px; }
+        .ob-title { font-size: 20px; font-weight: 900; color: #fff; line-height: 1.2; margin: 0; }
+        .ob-subtitle { font-size: 12px; color: #666; margin-top: 4px; }
+        .ob-progress { display: flex; gap: 6px; padding: 14px 24px 0; }
+        .ob-dot { height: 3px; border-radius: 2px; flex: 1; background: rgba(255,255,255,0.1); transition: background 0.4s ease; }
+        .ob-dot.active { background: #00d2ff; }
+        .ob-dot.done   { background: rgba(0,210,255,0.35); }
+        .ob-body { padding: 20px 24px 24px; }
+        .ob-step { display: none; flex-direction: column; gap: 16px; }
+        .ob-step.active { display: flex; }
+        .ob-desc { font-size: 13px; color: #aaa; line-height: 1.6; margin: 0; }
+        .ob-options { display: flex; gap: 10px; }
+        .ob-btn { flex: 1; padding: 12px 8px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: #ccc; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: 'Inter', sans-serif; text-align: center; }
+        .ob-btn:hover { background: rgba(255,255,255,0.09); color: #fff; border-color: rgba(255,255,255,0.2); }
+        .ob-btn.primary { background: rgba(0,210,255,0.12); border-color: rgba(0,210,255,0.35); color: #00d2ff; }
+        .ob-btn.primary:hover { background: rgba(0,210,255,0.22); border-color: rgba(0,210,255,0.6); }
+        .ob-btn.purple { background: rgba(120,0,255,0.12); border-color: rgba(160,0,255,0.35); color: #cc88ff; }
+        .ob-btn.purple:hover { background: rgba(120,0,255,0.22); border-color: rgba(160,0,255,0.6); }
+        .ob-tip { background: rgba(0,210,255,0.05); border: 1px solid rgba(0,210,255,0.15); border-radius: 10px; padding: 12px 14px; font-size: 12px; color: #888; line-height: 1.6; }
+        .ob-tip b { color: #00d2ff; }
+        .ob-tip a { color: #00d2ff; text-decoration: none; font-weight: 700; }
+        .ob-tip a:hover { text-decoration: underline; }
+        .ob-screen-hint { background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.1); border-radius: 8px; padding: 10px 14px; font-size: 11px; color: #555; line-height: 1.8; }
+        .ob-screen-hint code { background: rgba(0,210,255,0.1); color: #00d2ff; padding: 1px 5px; border-radius: 4px; font-family: 'Fira Code', monospace; }
+        .ob-key-input { width: 100%; background: rgba(0,0,0,0.5); border: 1px solid rgba(0,210,255,0.25); border-radius: 10px; color: #e0e0e0; padding: 11px 14px; font-size: 13px; outline: none; font-family: 'Inter', sans-serif; transition: border-color 0.2s; box-sizing: border-box; }
+        .ob-key-input:focus { border-color: rgba(0,210,255,0.55); }
+        .ob-key-input::placeholder { color: #444; }
+        .ob-skip { text-align: center; font-size: 11px; color: #444; cursor: pointer; padding-top: 4px; }
+        .ob-skip:hover { color: #666; }
+        @keyframes obSlideIn { from { opacity: 0; transform: translateY(24px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        #onboardingCard { animation: obSlideIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
+    </style>
+
+    <div id="onboardingOverlay">
+        <div id="onboardingCard">
+            <div class="ob-header">
+                <div class="ob-brand">Antigravity IDE</div>
+                <h2 class="ob-title">Bienvenue 🚀</h2>
+                <p class="ob-subtitle">Configuration rapide en quelques étapes</p>
+            </div>
+            <div class="ob-progress">
+                <div class="ob-dot active" id="dot1"></div>
+                <div class="ob-dot" id="dot2"></div>
+                <div class="ob-dot" id="dot3"></div>
+                <div class="ob-dot" id="dot4"></div>
+            </div>
+            <div class="ob-body">
+
+                <div class="ob-step active" id="ob-step1">
+                    <p class="ob-desc">Pour utiliser l'IA <b>localement</b> — privé, gratuit, illimité — vous avez besoin d'<b>Ollama</b>, un runtime de modèles open-source.</p>
+                    <div class="ob-tip">
+                        <b>Qu'est-ce qu'Ollama ?</b><br>
+                        Un serveur local qui fait tourner des modèles IA (Llama 3, Mistral, Gemma…) directement sur votre machine. Aucune donnée ne quitte votre ordinateur.
+                    </div>
+                    <p class="ob-desc" style="margin:0;">Avez-vous déjà <b>Ollama</b> installé ?</p>
+                    <div class="ob-options">
+                        <button class="ob-btn primary" onclick="obNext(2)">✅ Oui, installé</button>
+                        <button class="ob-btn" onclick="obShowOllamaInstall()">⬇️ Non, installer</button>
+                    </div>
+                    <div id="ob-ollama-install" style="display:none; flex-direction:column; gap:10px;">
+                        <div class="ob-tip">
+                            <b>Télécharger Ollama :</b><br>
+                            ➜ <a href="https://ollama.com/download" target="_blank">ollama.com/download ↗</a><br>
+                            Disponible sur macOS, Windows et Linux. Installation en 1 clic.
+                        </div>
+                        <div class="ob-screen-hint">
+                            💡 <b>Après installation</b>, ouvrez un terminal et lancez :<br>
+                            <code>ollama run llama3</code><br>
+                            Ollama démarrera son serveur sur <code>localhost:11434</code> — Antigravity le détectera automatiquement.
+                        </div>
+                        <button class="ob-btn primary" onclick="obNext(2)">J'ai installé Ollama →</button>
+                    </div>
+                </div>
+
+                <div class="ob-step" id="ob-step2">
+                    <p class="ob-desc">Préférez-vous une interface graphique ? <b>LM Studio</b> permet de gérer et lancer des modèles locaux facilement, sans ligne de commande.</p>
+                    <div class="ob-tip">
+                        LM Studio expose une API compatible OpenAI sur <code style="color:#00d2ff;background:rgba(0,210,255,0.1);padding:1px 5px;border-radius:4px;font-family:'Fira Code',monospace;">localhost:1234</code> — Antigravity la détecte automatiquement.
+                    </div>
+                    <p class="ob-desc" style="margin:0;">Utilisez-vous <b>LM Studio</b> ?</p>
+                    <div class="ob-options">
+                        <button class="ob-btn primary" onclick="obShowLmStudioHelp()">✅ Oui</button>
+                        <button class="ob-btn" onclick="obNext(3)">Non, passer →</button>
+                    </div>
+                    <div id="ob-lmstudio-help" style="display:none; flex-direction:column; gap:10px;">
+                        <div class="ob-tip">
+                            Pas encore installé ? ➜ <a href="https://lmstudio.ai/" target="_blank">lmstudio.ai ↗</a>
+                        </div>
+                        <div class="ob-screen-hint">
+                            💡 <b>Activer le serveur dans LM Studio :</b><br>
+                            1. Ouvrez LM Studio<br>
+                            2. Cliquez sur l'onglet <code>Local Server</code> (icône ↔️ à gauche)<br>
+                            3. Choisissez un modèle, cliquez sur <code>Start Server</code><br>
+                            Antigravity détectera le serveur et listera vos modèles.
+                        </div>
+                        <button class="ob-btn primary" onclick="obNext(3)">Continuer →</button>
+                    </div>
+                </div>
+
+                <div class="ob-step" id="ob-step3">
+                    <p class="ob-desc">Envie d'un modèle <b>Cloud rapide et gratuit</b> pour compléter le local ? <b>Google Gemini</b> offre un tier généreux sans carte bancaire.</p>
+                    <div class="ob-tip">
+                        <b>Pourquoi Gemini ?</b><br>
+                        • 1 million de tokens de contexte<br>
+                        • Streaming rapide, multimodal (images + code)<br>
+                        • 100% gratuit sur le plan standard
+                    </div>
+                    <p class="ob-desc" style="margin:0;">Voulez-vous configurer <b>Google Gemini</b> maintenant ?</p>
+                    <div class="ob-options">
+                        <button class="ob-btn purple" onclick="obShowGeminiSetup()">✨ Oui, configurer</button>
+                        <button class="ob-btn" onclick="obNext(4)">Non, plus tard →</button>
+                    </div>
+                    <div id="ob-gemini-setup" style="display:none; flex-direction:column; gap:10px;">
+                        <div class="ob-tip">
+                            1. Allez sur ➜ <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com/app/apikey ↗</a><br>
+                            2. Cliquez sur <b>"Create API key"</b> (gratuit, sans CB)<br>
+                            3. Copiez la clé et collez-la ci-dessous
+                        </div>
+                        <input type="password" id="ob-gemini-key" class="ob-key-input" placeholder="AIzaSy… (votre clé Google AI Studio)" autocomplete="off" />
+                        <button class="ob-btn purple" onclick="obSaveGeminiAndNext()">💾 Sauvegarder et continuer →</button>
+                        <div class="ob-skip" onclick="obNext(4)">Passer cette étape</div>
+                    </div>
+                </div>
+
+                <div class="ob-step" id="ob-step4">
+                    <div style="text-align:center; padding: 8px 0 4px;">
+                        <div style="font-size:48px; margin-bottom:10px;">🎉</div>
+                        <h3 style="color:#fff; font-size:18px; font-weight:900; margin:0 0 8px;">Tout est prêt !</h3>
+                        <p style="color:#888; font-size:13px; line-height:1.6; margin:0 0 16px;">Sélectionnez un modèle dans le menu en haut à droite et commencez à coder avec l'IA.</p>
+                    </div>
+                    <div class="ob-tip" style="font-size:12px; line-height:1.8;">
+                        <b>Quelques fonctions pour démarrer :</b><br>
+                        📎 <b>Fichier</b> — ajouter un fichier au contexte IA<br>
+                        🧠 <b>Réflexion</b> — l'IA planifie avant d'agir<br>
+                        🤖 <b>Agent</b> — mode autonome multi-étapes<br>
+                        ☁️ <b>Cloud</b> — gérer vos clés API supplémentaires
+                    </div>
+                    <button class="ob-btn primary" style="font-size:14px; padding:14px;" onclick="obFinish()">🚀 Commencer à utiliser Antigravity</button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var _obCurrent = 1;
+        function _obUpdateDots(step) {
+            for (var i = 1; i <= 4; i++) {
+                var dot = document.getElementById('dot' + i);
+                if (!dot) continue;
+                dot.className = 'ob-dot' + (i < step ? ' done' : i === step ? ' active' : '');
+            }
+        }
+        function obNext(step) {
+            var cur = document.getElementById('ob-step' + _obCurrent);
+            if (cur) cur.classList.remove('active');
+            _obCurrent = step;
+            var next = document.getElementById('ob-step' + step);
+            if (next) next.classList.add('active');
+            _obUpdateDots(step);
+        }
+        function obShowOllamaInstall() {
+            var el = document.getElementById('ob-ollama-install');
+            if (el) el.style.display = 'flex';
+        }
+        function obShowLmStudioHelp() {
+            var el = document.getElementById('ob-lmstudio-help');
+            if (el) el.style.display = 'flex';
+        }
+        function obShowGeminiSetup() {
+            var el = document.getElementById('ob-gemini-setup');
+            if (el) el.style.display = 'flex';
+            setTimeout(function() { var inp = document.getElementById('ob-gemini-key'); if (inp) inp.focus(); }, 100);
+        }
+        function obSaveGeminiAndNext() {
+            var inp = document.getElementById('ob-gemini-key');
+            var key = inp ? inp.value.trim() : '';
+            if (key.length > 5) { vscode.postMessage({ type: 'setupGeminiKey', key: key }); }
+            obNext(4);
+        }
+        function obFinish() {
+            document.getElementById('onboardingOverlay').style.display = 'none';
+            vscode.postMessage({ type: 'finishOnboarding' });
+            setTimeout(function() { vscode.postMessage({ type: 'getModels' }); }, 800);
+        }
+        if (typeof _showOnboarding !== 'undefined' && _showOnboarding) {
+            document.getElementById('onboardingOverlay').style.display = 'flex';
+        }
+    </script>
 </body>
 </html>`;
     }
