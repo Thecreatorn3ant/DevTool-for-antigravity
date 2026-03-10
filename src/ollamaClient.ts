@@ -61,6 +61,28 @@ export function estimateTokens(text: string): number {
     return Math.ceil(text.length / 4);
 }
 
+export function getCloudModelLimit(model: string, provider: string): number {
+    const m = model.toLowerCase();
+    const p = provider.toLowerCase();
+
+    if (p === 'gemini') return 128000;
+    if (p === 'anthropic') return 200000;
+    if (p === 'openai') return 128000;
+    if (p === 'deepseek') return 128000;
+
+    if (m.includes('8b') || m.includes('haiku') || m.includes('flash') || m.includes('small') || m.includes('mini')) {
+        return 32768;
+    }
+    if (m.includes('70b') || m.includes('405b') || m.includes('pro') || m.includes('sonnet') || m.includes('opus') || m.includes('turbo')) {
+        return 128000;
+    }
+    if (m.includes('r1') || m.includes('v3')) {
+        return 128000;
+    }
+
+    return 64000;
+}
+
 const VISION_MODELS: Record<string, string[]> = {
     'gemini': ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
     'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
@@ -296,12 +318,20 @@ export class OllamaClient {
     }
 
     getTokenBudget(model: string, targetUrl?: string): TokenBudget {
-        if (this.isCloud(targetUrl) && this._detectProvider(targetUrl || '') !== 'lmstudio') return { used: 0, max: 100_000 * 4, isCloud: true };
+        if (this.isCloud(targetUrl) && this._detectProvider(targetUrl || '') !== 'lmstudio') {
+            const provider = this._detectProvider(targetUrl || '');
+            const limit = getCloudModelLimit(model, provider);
+            return { used: 0, max: limit * 4, isCloud: true };
+        }
         return { used: 0, max: 8192 * 4, isCloud: false };
     }
 
     async getTokenBudgetAsync(model: string, targetUrl?: string): Promise<TokenBudget> {
-        if (this.isCloud(targetUrl) && this._detectProvider(targetUrl || '') !== 'lmstudio') return { used: 0, max: 100_000 * 4, isCloud: true };
+        if (this.isCloud(targetUrl) && this._detectProvider(targetUrl || '') !== 'lmstudio') {
+            const provider = this._detectProvider(targetUrl || '');
+            const limit = getCloudModelLimit(model, provider);
+            return { used: 0, max: limit * 4, isCloud: true };
+        }
         const tokens = await getLocalContextSize(model, targetUrl || this._getBaseUrl());
         return { used: 0, max: tokens * 4, isCloud: false };
     }
@@ -461,8 +491,12 @@ nouveau_code
         const provider = this._detectProvider(url);
         const { key } = this._getAvailableKey(url);
 
-        if (provider === 'lmstudio' || provider === 'openai-compat') {
-            return listOpenAICompatModels(url, key);
+        if (provider === 'lmstudio' || provider === 'openai-compat' || provider === 'xai') {
+            let finalUrl = url;
+            if (provider === 'xai' && !url.endsWith('/v1')) {
+                finalUrl = `${url.replace(/\/+$/, '')}/v1`;
+            }
+            return listOpenAICompatModels(finalUrl, key);
         }
         if (isLocalUrl(url) || provider === 'ollama-cloud') {
             return listLocalModels(url, key);
@@ -503,9 +537,17 @@ nouveau_code
             const provider = this._detectProvider(baseUrl);
             let list: string[] = [];
             try {
-                if (provider === 'gemini' && entry.key) list = await listGeminiModels(entry.key);
-                else if (provider === 'ollama-cloud' || (isLocalUrl(baseUrl) && provider !== 'lmstudio')) list = await listLocalModels(baseUrl, entry.key);
-                else list = await listOpenAICompatModels(baseUrl, entry.key);
+                if (provider === 'gemini' && entry.key) {
+                    list = await listGeminiModels(entry.key);
+                } else if (provider === 'ollama-cloud' || (isLocalUrl(baseUrl) && provider !== 'lmstudio')) {
+                    list = await listLocalModels(baseUrl, entry.key);
+                } else {
+                    let finalUrl = baseUrl;
+                    if (provider === 'xai' && !baseUrl.endsWith('/v1')) {
+                        finalUrl = `${baseUrl}/v1`;
+                    }
+                    list = await listOpenAICompatModels(finalUrl, entry.key);
+                }
             } catch { }
             for (const m of list) {
                 const k = `${baseUrl}||${m}`;
@@ -521,8 +563,12 @@ nouveau_code
         const provider = this._detectProvider(url);
         const { key } = this._getAvailableKey(url);
 
-        if (provider === 'lmstudio' || provider === 'openai-compat') {
-            try { await listOpenAICompatModels(url, key); return true; }
+        if (provider === 'lmstudio' || provider === 'openai-compat' || provider === 'xai') {
+            let finalUrl = url;
+            if (provider === 'xai' && !url.endsWith('/v1')) {
+                finalUrl = `${url.replace(/\/+$/, '')}/v1`;
+            }
+            try { await listOpenAICompatModels(finalUrl, key); return true; }
             catch { return false; }
         }
 

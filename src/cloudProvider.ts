@@ -4,6 +4,7 @@ export type CloudProviderType =
     | 'openai-compat'
     | 'gemini'
     | 'anthropic'
+    | 'xai'
     | 'unknown';
 
 export function detectProviderName(url: string): string {
@@ -32,6 +33,7 @@ export function detectCloudType(url: string): CloudProviderType {
     const u = url.toLowerCase();
     if (u.includes('generativelanguage.googleapis.com')) return 'gemini';
     if (u.includes('anthropic.com') || u.includes('claude.ai')) return 'anthropic';
+    if (u.includes('api.x.ai') || u.includes('grok')) return 'xai';
     if (!u.includes('localhost') && !u.includes('127.0.0.1')) return 'openai-compat';
     if (u.includes(':1234') || u.endsWith('/v1')) return 'openai-compat'; // LM Studio
     return 'unknown';
@@ -352,6 +354,11 @@ export async function cloudStream(
         return geminiStream(opts, onChunk);
     } else if (type === 'anthropic') {
         return anthropicStream(opts, onChunk);
+    } else if (type === 'xai') {
+        // Normalisation de l'URL pour xAI (Grok) : ajout de /v1 si manquant
+        const baseUrl = opts.baseUrl.replace(/\/+$/, '');
+        const finalUrl = baseUrl.endsWith('/v1') ? baseUrl : `${baseUrl}/v1`;
+        return openAICompatStream({ ...opts, baseUrl: finalUrl }, onChunk);
     } else if (type === 'openai-compat') {
         return openAICompatStream(opts, onChunk);
     } else {
