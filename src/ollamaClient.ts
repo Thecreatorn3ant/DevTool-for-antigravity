@@ -510,24 +510,36 @@ nouveau_code
         const LOCAL_URL = 'http://localhost:11434';
         const LMSTUDIO_URL = this._getLmStudioUrl();
 
-        const localModels = await listLocalModels(LOCAL_URL);
-        for (const m of localModels) {
-            const k = `${LOCAL_URL}||${m}`;
-            if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LOCAL_URL, provider: 'local' }); }
+        try {
+            const localModels = await listLocalModels(LOCAL_URL);
+            for (const m of localModels) {
+                const k = `${LOCAL_URL}||${m}`;
+                if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LOCAL_URL, provider: 'local' }); }
+            }
+        } catch (e) {
+            console.warn(`[OllamaClient] Initial Local models fetch failed: ${e}`);
         }
 
         const configUrl = this._getBaseUrl().replace(/\/+$/, '');
         if (isLocalUrl(configUrl) && configUrl !== LOCAL_URL && configUrl !== 'http://127.0.0.1:11434' && this._detectProvider(configUrl) !== 'lmstudio') {
-            for (const m of await listLocalModels(configUrl)) {
-                const k = `${configUrl}||${m}`;
-                if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: configUrl, provider: 'local' }); }
+            try {
+                for (const m of await listLocalModels(configUrl)) {
+                    const k = `${configUrl}||${m}`;
+                    if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: configUrl, provider: 'local' }); }
+                }
+            } catch (e) {
+                console.warn(`[OllamaClient] Config Local models fetch failed for ${configUrl}: ${e}`);
             }
         }
 
-        const lmStudioModels = await listOpenAICompatModels(LMSTUDIO_URL);
-        for (const m of lmStudioModels) {
-            const k = `${LMSTUDIO_URL}||${m}`;
-            if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LMSTUDIO_URL, provider: 'lmstudio' }); }
+        try {
+            const lmStudioModels = await listOpenAICompatModels(LMSTUDIO_URL);
+            for (const m of lmStudioModels) {
+                const k = `${LMSTUDIO_URL}||${m}`;
+                if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LMSTUDIO_URL, provider: 'lmstudio' }); }
+            }
+        } catch (e) {
+            console.warn(`[OllamaClient] LM Studio models fetch failed: ${e}`);
         }
 
         for (const entry of this.getApiKeys()) {
