@@ -61,26 +61,129 @@ export function estimateTokens(text: string): number {
     return Math.ceil(text.length / 4);
 }
 
+// Vraies limites de contexte par modèle (en tokens)
+// Mise à jour : 2025 — sources: docs officielles de chaque provider
+const MODEL_CONTEXT_LIMITS: Array<{ match: string | RegExp; tokens: number; note?: string }> = [
+    { match: 'gemini-2.5-pro', tokens: 1_048_576, note: 'Gemini 2.5 Pro' },
+    { match: 'gemini-2.5-flash', tokens: 1_048_576, note: 'Gemini 2.5 Flash' },
+    { match: 'gemini-2.0-flash-exp', tokens: 1_048_576, note: 'Gemini 2.0 Flash Exp' },
+    { match: 'gemini-2.0-flash', tokens: 1_048_576, note: 'Gemini 2.0 Flash' },
+    { match: 'gemini-1.5-pro', tokens: 2_097_152, note: 'Gemini 1.5 Pro — 2M ctx' },
+    { match: 'gemini-1.5-flash-8b', tokens: 1_048_576, note: 'Gemini 1.5 Flash 8B' },
+    { match: 'gemini-1.5-flash', tokens: 1_048_576, note: 'Gemini 1.5 Flash' },
+    { match: 'gemini-pro', tokens: 128_000, note: 'Gemini 1.0 Pro (legacy)' },
+    { match: /gemini/, tokens: 1_048_576, note: 'Gemini (générique)' },
+
+    { match: 'claude-3-5-sonnet', tokens: 200_000 },
+    { match: 'claude-3-5-haiku', tokens: 200_000 },
+    { match: 'claude-3-opus', tokens: 200_000 },
+    { match: 'claude-3-sonnet', tokens: 200_000 },
+    { match: 'claude-3-haiku', tokens: 200_000 },
+    { match: 'claude-2.1', tokens: 200_000 },
+    { match: 'claude-2', tokens: 100_000 },
+    { match: /claude/, tokens: 200_000, note: 'Claude (générique)' },
+
+    { match: 'gpt-4.5', tokens: 128_000 },
+    { match: 'gpt-4o-mini', tokens: 128_000 },
+    { match: 'gpt-4o', tokens: 128_000 },
+    { match: 'gpt-4-turbo', tokens: 128_000 },
+    { match: 'gpt-4-32k', tokens: 32_768 },
+    { match: 'gpt-4', tokens: 8_192 },
+    { match: 'gpt-3.5-turbo-16k', tokens: 16_385 },
+    { match: 'gpt-3.5', tokens: 16_385 },
+    { match: 'o1-mini', tokens: 128_000 },
+    { match: 'o1-preview', tokens: 128_000 },
+    { match: 'o1', tokens: 200_000 },
+    { match: 'o3-mini', tokens: 200_000 },
+    { match: 'o3', tokens: 200_000 },
+
+    { match: 'deepseek-r1', tokens: 128_000 },
+    { match: 'deepseek-v3', tokens: 128_000 },
+    { match: 'deepseek-v2.5', tokens: 128_000 },
+    { match: 'deepseek-coder-v2', tokens: 128_000 },
+    { match: 'deepseek-coder', tokens: 16_384 },
+    { match: /deepseek/, tokens: 128_000 },
+
+    { match: 'mistral-large', tokens: 131_072 },
+    { match: 'mistral-small', tokens: 131_072 },
+    { match: 'mistral-nemo', tokens: 131_072 },
+    { match: 'ministral-8b', tokens: 131_072 },
+    { match: 'ministral-3b', tokens: 131_072 },
+    { match: 'codestral', tokens: 262_144 },
+    { match: 'mixtral-8x22b', tokens: 65_536 },
+    { match: 'mixtral-8x7b', tokens: 32_768 },
+    { match: /mistral|mixtral|ministral/, tokens: 131_072 },
+
+    { match: 'llama-3.3-70b', tokens: 131_072 },
+    { match: 'llama-3.2-90b', tokens: 131_072 },
+    { match: 'llama-3.2-11b', tokens: 131_072 },
+    { match: 'llama-3.2-3b', tokens: 131_072 },
+    { match: 'llama-3.2-1b', tokens: 131_072 },
+    { match: 'llama-3.1-405b', tokens: 131_072 },
+    { match: 'llama-3.1-70b', tokens: 131_072 },
+    { match: 'llama-3.1-8b', tokens: 131_072 },
+    { match: 'llama-3-70b', tokens: 8_192 },
+    { match: 'llama-3-8b', tokens: 8_192 },
+    { match: /llama-?3\.[12]/, tokens: 131_072 },
+    { match: /llama/, tokens: 8_192 },
+
+    { match: 'qwen2.5-coder-32b', tokens: 131_072 },
+    { match: 'qwen2.5-72b', tokens: 131_072 },
+    { match: 'qwen2.5-32b', tokens: 131_072 },
+    { match: 'qwen2.5-7b', tokens: 131_072 },
+    { match: /qwen2\.5|qwen-2\.5/, tokens: 131_072 },
+    { match: /qwen/, tokens: 32_768 },
+
+    { match: 'grok-3', tokens: 131_072 },
+    { match: 'grok-2', tokens: 131_072 },
+    { match: 'grok-1.5', tokens: 131_072 },
+    { match: /grok/, tokens: 131_072 },
+
+    { match: 'llama3-groq-70b', tokens: 8_192 },
+    { match: 'llama3-groq-8b', tokens: 8_192 },
+    { match: 'gemma2-9b-it', tokens: 8_192 },
+    { match: 'command-r-plus', tokens: 128_000 },
+    { match: 'command-r', tokens: 128_000 },
+    { match: /command/, tokens: 128_000 },
+
+    { match: /sonar/, tokens: 127_072 },
+    { match: /perplexity/, tokens: 127_072 },
+
+    { match: /fireworks/, tokens: 131_072 },
+];
+
+/**
+ * Retourne la vraie limite de contexte (en tokens) pour un modèle donné.
+ * La recherche se fait d'abord sur le nom exact (sous-chaîne),
+ * puis sur les RegExp, dans l'ordre de déclaration (du plus spécifique au plus général).
+ */
 export function getCloudModelLimit(model: string, provider: string): number {
-    const m = model.toLowerCase();
+    const m = model.toLowerCase().trim();
     const p = provider.toLowerCase();
 
-    if (p === 'gemini') return 128000;
-    if (p === 'anthropic') return 200000;
-    if (p === 'openai') return 128000;
-    if (p === 'deepseek') return 128000;
-
-    if (m.includes('8b') || m.includes('haiku') || m.includes('flash') || m.includes('small') || m.includes('mini')) {
-        return 32768;
-    }
-    if (m.includes('70b') || m.includes('405b') || m.includes('pro') || m.includes('sonnet') || m.includes('opus') || m.includes('turbo')) {
-        return 128000;
-    }
-    if (m.includes('r1') || m.includes('v3')) {
-        return 128000;
+    for (const entry of MODEL_CONTEXT_LIMITS) {
+        if (typeof entry.match === 'string') {
+            if (m.includes(entry.match)) return entry.tokens;
+        } else {
+            if (entry.match.test(m)) return entry.tokens;
+        }
     }
 
-    return 64000;
+    switch (p) {
+        case 'gemini': return 1_048_576;
+        case 'anthropic': return 200_000;
+        case 'openai': return 128_000;
+        case 'deepseek': return 128_000;
+        case 'groq': return 32_768;
+        case 'mistral': return 131_072;
+        case 'together': return 131_072;
+        case 'openrouter': return 128_000;
+        case 'cohere': return 128_000;
+        case 'xai': return 131_072;
+        case 'fireworks': return 131_072;
+        case 'perplexity': return 127_072;
+        default: return 128_000;
+    }
 }
 
 const VISION_MODELS: Record<string, string[]> = {
