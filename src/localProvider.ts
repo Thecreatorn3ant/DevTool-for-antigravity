@@ -328,10 +328,11 @@ export async function localStream(
 
 export async function listLocalModels(baseUrl: string = 'http://localhost:11434', apiKey?: string): Promise<string[]> {
     try {
-        const url = baseUrl.includes('://') ? baseUrl : `https://${baseUrl}`;
+        const url = baseUrl.includes('://') ? baseUrl : `http://${baseUrl}`;
+        const cleanUrl = url.replace(/\/+$/, '');
         const headers: Record<string, string> = {};
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-        const finalUrl = `${url.replace(/\/+$/, '')}/api/tags`;
+        const finalUrl = `${cleanUrl}/api/tags`;
         console.log(`[Ollama] ListModels: ${finalUrl} (auth: ${!!apiKey})`);
         const res = await fetch(finalUrl, { headers, signal: AbortSignal.timeout(5000) });
         if (!res.ok) {
@@ -350,7 +351,7 @@ export async function listLocalModels(baseUrl: string = 'http://localhost:11434'
 
 export async function checkLocalConnection(baseUrl: string = 'http://localhost:11434', apiKey?: string): Promise<boolean> {
     try {
-        const url = baseUrl.includes('://') ? baseUrl : `https://${baseUrl}`;
+        const url = baseUrl.includes('://') ? baseUrl : `http://${baseUrl}`;
         const headers: Record<string, string> = {};
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
         const res = await fetch(`${url.replace(/\/+$/, '')}/api/tags`, { headers, signal: AbortSignal.timeout(5000) });

@@ -678,39 +678,53 @@ nouveau_code
     async listAllModels(): Promise<{ name: string; isLocal: boolean; url: string; provider: string }[]> {
         const result: { name: string; isLocal: boolean; url: string; provider: string }[] = [];
         const seen = new Set<string>();
-        const LOCAL_URL = 'http://localhost:11434';
-        const LMSTUDIO_URL = this._getLmStudioUrl();
 
-        try {
-            const localModels = await listLocalModels(LOCAL_URL);
-            for (const m of localModels) {
-                const k = `${LOCAL_URL}||${m}`;
-                if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LOCAL_URL, provider: 'local' }); }
-            }
-        } catch (e) {
-            console.warn(`[OllamaClient] Initial Local models fetch failed: ${e}`);
-        }
+        const OLLAMA_URLS = [
+            'http://localhost:11434',
+            'http://127.0.0.1:11434',
+        ];
 
         const configUrl = this._getBaseUrl().replace(/\/+$/, '');
-        if (isLocalUrl(configUrl) && configUrl !== LOCAL_URL && configUrl !== 'http://127.0.0.1:11434' && this._detectProvider(configUrl) !== 'lmstudio') {
+        if (configUrl && !OLLAMA_URLS.includes(configUrl) && isLocalUrl(configUrl) && this._detectProvider(configUrl) !== 'lmstudio') {
+            OLLAMA_URLS.push(configUrl);
+        }
+
+        for (const ollamaUrl of OLLAMA_URLS) {
             try {
-                for (const m of await listLocalModels(configUrl)) {
-                    const k = `${configUrl}||${m}`;
-                    if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: configUrl, provider: 'local' }); }
+                const localModels = await listLocalModels(ollamaUrl);
+                if (localModels.length > 0) {
+                    console.log(`[OllamaClient] ✓ Ollama trouvé sur ${ollamaUrl}: ${localModels.length} modèles`);
+                    for (const m of localModels) {
+                        const k = `${ollamaUrl}||${m}`;
+                        if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: ollamaUrl, provider: 'local' }); }
+                    }
+                    break;
                 }
             } catch (e) {
-                console.warn(`[OllamaClient] Config Local models fetch failed for ${configUrl}: ${e}`);
+                console.warn(`[OllamaClient] Ollama inaccessible sur ${ollamaUrl}: ${e}`);
             }
         }
 
-        try {
-            const lmStudioModels = await listOpenAICompatModels(LMSTUDIO_URL);
-            for (const m of lmStudioModels) {
-                const k = `${LMSTUDIO_URL}||${m}`;
-                if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LMSTUDIO_URL, provider: 'lmstudio' }); }
+        const LMSTUDIO_URLS = [
+            this._getLmStudioUrl(),
+            'http://localhost:1234/v1',
+            'http://127.0.0.1:1234/v1',
+        ].filter((v, i, arr) => arr.indexOf(v) === i);
+
+        for (const lmUrl of LMSTUDIO_URLS) {
+            try {
+                const lmModels = await listOpenAICompatModels(lmUrl);
+                if (lmModels.length > 0) {
+                    console.log(`[OllamaClient] ✓ LM Studio trouvé sur ${lmUrl}: ${lmModels.length} modèles`);
+                    for (const m of lmModels) {
+                        const k = `${lmUrl}||${m}`;
+                        if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: lmUrl, provider: 'lmstudio' }); }
+                    }
+                    break;
+                }
+            } catch (e) {
+                console.warn(`[OllamaClient] LM Studio inaccessible sur ${lmUrl}: ${e}`);
             }
-        } catch (e) {
-            console.warn(`[OllamaClient] LM Studio models fetch failed: ${e}`);
         }
 
         for (const entry of this.getApiKeys()) {

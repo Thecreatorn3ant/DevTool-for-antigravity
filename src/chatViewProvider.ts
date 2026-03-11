@@ -992,7 +992,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
             const allModels = await this._ollamaClient.listAllModels();
             const PROVIDER_ICONS: Record<string, string> = {
-                local: '⚡', gemini: '✦', openai: '◈', openrouter: '◎',
+                local: '⚡', lmstudio: '💻', gemini: '✦', openai: '◈', openrouter: '◎',
                 together: '◉', mistral: '◆', groq: '▸', anthropic: '◈',
                 deepseek: '◉', cohere: '◈', perplexity: '◎', xai: '◈',
                 fireworks: '⚡', 'ollama-cloud': '☁️'
@@ -1827,7 +1827,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             "    var m = e.data;",
             "    if (m.type === 'setModels') {",
             "        if (m.models && m.models.length > 0) { _allModels = m.models; renderModelOptions(m.models, m.selected); }",
-            "        else { _allModels = []; modelSelect.innerHTML = '<option value=\"\" style=\"color:#ff6b6b\">⚠️ Ollama hors ligne</option>'; updateSelectColor(); }",
+            "        else { _allModels = []; modelSelect.innerHTML = '<option value=\"\" style=\"color:#ff6b6b\">⚠️ Aucun modèle — lancez Ollama ou LM Studio</option>'; updateSelectColor(); }",
             "    }",
             "    if (m.type === 'startResponse') {",
             "        showStopButton();",
