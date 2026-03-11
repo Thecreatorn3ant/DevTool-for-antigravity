@@ -6,7 +6,7 @@
   "publisher": "antigravity",
   "icon": "media/icon.png",
   "engines": {
-    "vscode": "^1.107.0"
+    "vscode": "1.111.0"
   },
   "categories": [
     "AI",
@@ -190,7 +190,7 @@
     "eslint": "10.0.3",
     "glob": "13.0.6",
     "mocha": "11.7.5",
-    "typescript": "5.x",
+    "typescript": "5.9.3",
     "@vscode/test-electron": "2.5.2"
   }
 }
