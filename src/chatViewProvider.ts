@@ -555,6 +555,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         this._history.push({ role: 'user', value: userMsg });
         this._updateHistory();
+        if (!this._sessionManager.getCurrentSession()) {
+            await this._sessionManager.createNewSession(resolvedModel);
+        }
         this._sessionManager.addMessage('user', userMsg);
 
         if (this._currentAbortController) {
@@ -589,7 +592,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
             this._history.push({ role: 'ai', value: fullRes });
             this._updateHistory();
-            this._sessionManager.addMessage('assistant', fullRes);
+            if (this._sessionManager.getCurrentSession()) {
+                this._sessionManager.addMessage('assistant', fullRes);
+            }
             this._view.webview.postMessage({ type: 'endResponse', value: fullRes });
             this._sendTokenBudget();
 
@@ -2018,7 +2023,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             "        .catch(function(){ if(st) st.className='ob-status ok'; if(tx) tx.textContent='✓ Key saved (connection test skipped)'; vscode.postMessage({type:'setupGeminiKey',key:key}); setTimeout(function(){ obGo(4); },1000); });",
             "}",
             "if (_showOnboarding) { document.getElementById('obOverlay').style.display = 'flex'; }",
-            "document.getElementById('btnOnboarding').onclick = function() { obOpen(); };"
+            "var _btnOb = document.getElementById('btnOnboarding'); if (_btnOb) { _btnOb.onclick = function() { obOpen(); }; }"
         ].join("\n");
 
         return `<!DOCTYPE html>
@@ -2147,7 +2152,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         <span class="header-brand">ANTIGRAVITY</span>
         <div class="header-controls">
             <button class="btn-cloud" id="btnCloud">☁️ Cloud</button>
-            <button class="btn-cloud" id="btnOnboarding" onclick="obOpen();" title="Revoir le guide de démarrage" style="padding:4px 8px;">🛸</button>
+            <button class="btn-cloud" id="btnOnboarding" title="Revoir le guide de démarrage" style="padding:4px 8px;">🛸</button>
             <div id="modelComboWrap">
                 <div id="modelComboBox">
                     <input id="modelSearch" type="text" placeholder="Modèle…" autocomplete="off" spellcheck="false">
