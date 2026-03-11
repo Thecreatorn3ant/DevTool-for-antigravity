@@ -31,6 +31,36 @@ const QUOTA_PROFILES: Record<string, ProviderQuotaProfile> = {
         suspensionThresholdMs: 24 * 60 * 60 * 1000,
         quotaDescription: 'Quota journalier / crédits',
     },
+    'anthropic': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota par minute / crédits',
+    },
+    'deepseek': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota journalier / crédits',
+    },
+    'cohere': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota journalier (trial gratuit)',
+    },
+    'perplexity': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota par minute / crédits',
+    },
+    'xai': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota par minute / crédits',
+    },
+    'fireworks': {
+        sessionThresholdMs: 60 * 60 * 1000,
+        suspensionThresholdMs: 24 * 60 * 60 * 1000,
+        quotaDescription: 'Quota par minute / crédits',
+    },
     '_default': {
         sessionThresholdMs: 60 * 60 * 1000,
         suspensionThresholdMs: 24 * 60 * 60 * 1000,
@@ -49,7 +79,7 @@ function classifyRateLimit(provider: string, cooldownMs: number): RateLimitTier 
     return 'session';
 }
 
-const FAILOVER_PRIORITY: string[] = ['local', 'openrouter', 'groq', 'mistral', 'together', 'openai', 'anthropic', 'ollama-cloud'];
+const FAILOVER_PRIORITY: string[] = ['local', 'lmstudio', 'deepseek', 'openrouter', 'groq', 'fireworks', 'mistral', 'together', 'cohere', 'perplexity', 'xai', 'openai', 'anthropic', 'ollama-cloud'];
 
 export interface ProviderCapabilities {
     vision: boolean;
@@ -121,6 +151,7 @@ export interface ProviderSuspendedEvent {
 
 const PROVIDER_CAPS: Record<string, ProviderCapabilities> = {
     'local': { vision: true, streaming: true, maxContextK: 32, freeDefault: true },
+    'lmstudio': { vision: true, streaming: true, maxContextK: 32, freeDefault: true },
     'gemini': { vision: true, streaming: true, maxContextK: 128, freeDefault: true },
     'openai': { vision: true, streaming: true, maxContextK: 128, freeDefault: false },
     'openrouter': { vision: true, streaming: true, maxContextK: 128, freeDefault: true },
@@ -128,6 +159,11 @@ const PROVIDER_CAPS: Record<string, ProviderCapabilities> = {
     'mistral': { vision: false, streaming: true, maxContextK: 32, freeDefault: false },
     'groq': { vision: false, streaming: true, maxContextK: 32, freeDefault: false },
     'anthropic': { vision: true, streaming: true, maxContextK: 200, freeDefault: false },
+    'deepseek': { vision: false, streaming: true, maxContextK: 128, freeDefault: false },
+    'cohere': { vision: false, streaming: true, maxContextK: 128, freeDefault: true },
+    'perplexity': { vision: false, streaming: true, maxContextK: 128, freeDefault: false },
+    'xai': { vision: false, streaming: true, maxContextK: 128, freeDefault: false },
+    'fireworks': { vision: false, streaming: true, maxContextK: 32, freeDefault: false },
     'ollama-cloud': { vision: true, streaming: true, maxContextK: 32, freeDefault: false },
 };
 
@@ -135,7 +171,10 @@ export const FREE_MODELS: Record<string, string[]> = {
     'gemini': ['gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-2.0-flash'],
     'openrouter': [],
     'groq': ['llama-3.1-8b-instant', 'llama3-8b-8192', 'mixtral-8x7b-32768'],
+    'deepseek': ['deepseek-chat', 'deepseek-coder'],
+    'cohere': ['command-r', 'command-r-plus'],
     'local': [],
+    'lmstudio': [],
 };
 
 export class ProviderRouter {
@@ -258,7 +297,7 @@ export class ProviderRouter {
         let score = 100;
         score -= Math.min(30, h.latencyMs / 100);
         score -= h.errorRate * 40;
-        if (h.provider === 'local') score += 20;
+        if (h.provider === 'local' || h.provider === 'lmstudio') score += 20;
         if (task === 'agent' && h.capabilities.maxContextK >= 100) score += 15;
         if (task === 'vision' && h.capabilities.vision) score += 25;
         if (h.capabilities.freeDefault) score += 10;
@@ -454,7 +493,7 @@ export class ProviderRouter {
     }
 
     private _findLocalProvider(): ProviderHealth | undefined {
-        return Array.from(this._health.values()).find(h => h.provider === 'local');
+        return Array.from(this._health.values()).find(h => h.provider === 'local' || h.provider === 'lmstudio');
     }
 
     private _findBestFailover(excludeProvider: string): ProviderHealth | null {
@@ -584,7 +623,7 @@ export class ProviderRouter {
 
     async pingProvider(url: string, apiKey: string = ''): Promise<{ ok: boolean; latencyMs: number }> {
         const t0 = Date.now();
-        const isOpenAI = url.includes('together') || url.includes('openrouter') || url.endsWith('/v1');
+        const isOpenAI = url.includes('together') || url.includes('openrouter') || url.includes(':1234') || url.endsWith('/v1');
         const isGemini = url.includes('generativelanguage.googleapis.com');
         let endpoint = isOpenAI ? `${url}/models` : `${url}/api/tags`;
         if (isGemini && apiKey) endpoint = `${url}/models?key=${apiKey}`;

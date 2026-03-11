@@ -5,7 +5,7 @@
 > L'installation de cette version sur un VS Code classique peut provoquer des instabilités.
 
 👉 Pour télécharger la version stable pour VS Code :
-[DevTool for vscode](https://github.com/Thecreatorn3ant/DevTool/releases/tag/v0.0.2)
+[DevTool for vscode](https://github.com/Thecreatorn3ant/DevTool)
 
 **Antigravity** est une extension VS Code puissante conçue pour intégrer l'intelligence artificielle locale (via **Ollama**) ou distante directement dans votre flux de travail. Développez plus vite avec un contexte intelligent, des correctifs automatiques et une interface immersive.
 
@@ -25,7 +25,7 @@
 
 Pas besoin de compiler le code ! Suivez ces étapes simples :
 
-1.  **Télécharger le fichier** : Allez dans la section **[Releases](https://github.com/Thecreatorn3ant/DevTool-for-antigravity/releases/tag/v0.0.2)** (ou dans le dossier `bin/` du dépôt) et téléchargez le fichier `local-ai-for-antigravity-ide-0.0.2.vsix`.
+1.  **Télécharger le fichier** : Allez dans la section **[Releases](https://github.com/Thecreatorn3ant/DevTool-for-antigravity/releases/tag/v0.0.3)** (ou dans le dossier `bin/` du dépôt) et téléchargez le fichier `local-ai-for-antigravity-ide-0.0.3.vsix`.
 2.  **Installer sur VS Code** :
     - Ouvrez VS Code.
     - Allez dans l'onglet **Extensions** (`Ctrl+Shift+X`).

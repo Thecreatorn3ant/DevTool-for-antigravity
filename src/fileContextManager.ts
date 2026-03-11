@@ -143,9 +143,10 @@ export class FileContextManager {
                 '✅ Autoriser', '❌ Refuser'
             );
             if (r !== '✅ Autoriser') return null;
-        } else if (filePermission === 'ask-all' && !inWorkspace) {
+        } else if (filePermission === 'ask-all') {
+            const location = inWorkspace ? 'dans le workspace' : 'hors workspace';
             const r = await vscode.window.showInformationMessage(
-                `Accès fichier : "${filePath}". Autoriser ?`,
+                `Accès au fichier (${location}) : "${filePath}". Autoriser ?`,
                 { modal: false },
                 '✅ Autoriser', '❌ Refuser'
             );
@@ -267,6 +268,40 @@ export class FileContextManager {
 
     async getStagedDiffForCommit(): Promise<string> {
         return this.getGitDiff(true);
+    }
+
+    async getGitBranchName(): Promise<string> {
+        try {
+            const gitExt = vscode.extensions.getExtension('vscode.git')?.exports;
+            const api = gitExt?.getAPI(1);
+            const repo = api?.repositories?.[0];
+            return repo?.state?.HEAD?.name || '';
+        } catch { return ''; }
+    }
+
+    async getRecentCommits(n: number = 5): Promise<string> {
+        try {
+            const gitExt = vscode.extensions.getExtension('vscode.git')?.exports;
+            const api = gitExt?.getAPI(1);
+            const repo = api?.repositories?.[0];
+            if (!repo) return '';
+            const log = await repo.log({ maxEntries: n });
+            if (!log?.length) return '';
+            return log.map((c: any) =>
+                `  ${(c.hash || '???????').substring(0, 7)} ${(c.message || '').split('\n')[0]}`
+            ).join('\n');
+        } catch { return ''; }
+    }
+
+    async stageAllChanges(): Promise<boolean> {
+        try {
+            const gitExt = vscode.extensions.getExtension('vscode.git')?.exports;
+            const api = gitExt?.getAPI(1);
+            const repo = api?.repositories?.[0];
+            if (!repo) return false;
+            await repo.add([]);
+            return true;
+        } catch { return false; }
     }
 
     getProjectSummary(): string {

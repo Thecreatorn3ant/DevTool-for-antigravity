@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { ProviderRouter, TaskType, FREE_MODELS } from './providerRouter';
+import { SecretKeyStore } from './secretKeyStore';
+import { ModelConfigManager } from './modelConfigManager';
 
 import {
     isLocalUrl,
@@ -60,6 +62,131 @@ export function estimateTokens(text: string): number {
     return Math.ceil(text.length / 4);
 }
 
+// Vraies limites de contexte par modèle (en tokens)
+// Mise à jour : 2025 — sources: docs officielles de chaque provider
+const MODEL_CONTEXT_LIMITS: Array<{ match: string | RegExp; tokens: number; note?: string }> = [
+    { match: 'gemini-2.5-pro', tokens: 1_048_576, note: 'Gemini 2.5 Pro' },
+    { match: 'gemini-2.5-flash', tokens: 1_048_576, note: 'Gemini 2.5 Flash' },
+    { match: 'gemini-2.0-flash-exp', tokens: 1_048_576, note: 'Gemini 2.0 Flash Exp' },
+    { match: 'gemini-2.0-flash', tokens: 1_048_576, note: 'Gemini 2.0 Flash' },
+    { match: 'gemini-1.5-pro', tokens: 2_097_152, note: 'Gemini 1.5 Pro — 2M ctx' },
+    { match: 'gemini-1.5-flash-8b', tokens: 1_048_576, note: 'Gemini 1.5 Flash 8B' },
+    { match: 'gemini-1.5-flash', tokens: 1_048_576, note: 'Gemini 1.5 Flash' },
+    { match: 'gemini-pro', tokens: 128_000, note: 'Gemini 1.0 Pro (legacy)' },
+    { match: /gemini/, tokens: 1_048_576, note: 'Gemini (générique)' },
+
+    { match: 'claude-3-5-sonnet', tokens: 200_000 },
+    { match: 'claude-3-5-haiku', tokens: 200_000 },
+    { match: 'claude-3-opus', tokens: 200_000 },
+    { match: 'claude-3-sonnet', tokens: 200_000 },
+    { match: 'claude-3-haiku', tokens: 200_000 },
+    { match: 'claude-2.1', tokens: 200_000 },
+    { match: 'claude-2', tokens: 100_000 },
+    { match: /claude/, tokens: 200_000, note: 'Claude (générique)' },
+
+    { match: 'gpt-4.5', tokens: 128_000 },
+    { match: 'gpt-4o-mini', tokens: 128_000 },
+    { match: 'gpt-4o', tokens: 128_000 },
+    { match: 'gpt-4-turbo', tokens: 128_000 },
+    { match: 'gpt-4-32k', tokens: 32_768 },
+    { match: 'gpt-4', tokens: 8_192 },
+    { match: 'gpt-3.5-turbo-16k', tokens: 16_385 },
+    { match: 'gpt-3.5', tokens: 16_385 },
+    { match: 'o1-mini', tokens: 128_000 },
+    { match: 'o1-preview', tokens: 128_000 },
+    { match: 'o1', tokens: 200_000 },
+    { match: 'o3-mini', tokens: 200_000 },
+    { match: 'o3', tokens: 200_000 },
+
+    { match: 'deepseek-r1', tokens: 128_000 },
+    { match: 'deepseek-v3', tokens: 128_000 },
+    { match: 'deepseek-v2.5', tokens: 128_000 },
+    { match: 'deepseek-coder-v2', tokens: 128_000 },
+    { match: 'deepseek-coder', tokens: 16_384 },
+    { match: /deepseek/, tokens: 128_000 },
+
+    { match: 'mistral-large', tokens: 131_072 },
+    { match: 'mistral-small', tokens: 131_072 },
+    { match: 'mistral-nemo', tokens: 131_072 },
+    { match: 'ministral-8b', tokens: 131_072 },
+    { match: 'ministral-3b', tokens: 131_072 },
+    { match: 'codestral', tokens: 262_144 },
+    { match: 'mixtral-8x22b', tokens: 65_536 },
+    { match: 'mixtral-8x7b', tokens: 32_768 },
+    { match: /mistral|mixtral|ministral/, tokens: 131_072 },
+
+    { match: 'llama-3.3-70b', tokens: 131_072 },
+    { match: 'llama-3.2-90b', tokens: 131_072 },
+    { match: 'llama-3.2-11b', tokens: 131_072 },
+    { match: 'llama-3.2-3b', tokens: 131_072 },
+    { match: 'llama-3.2-1b', tokens: 131_072 },
+    { match: 'llama-3.1-405b', tokens: 131_072 },
+    { match: 'llama-3.1-70b', tokens: 131_072 },
+    { match: 'llama-3.1-8b', tokens: 131_072 },
+    { match: 'llama-3-70b', tokens: 8_192 },
+    { match: 'llama-3-8b', tokens: 8_192 },
+    { match: /llama-?3\.[12]/, tokens: 131_072 },
+    { match: /llama/, tokens: 8_192 },
+
+    { match: 'qwen2.5-coder-32b', tokens: 131_072 },
+    { match: 'qwen2.5-72b', tokens: 131_072 },
+    { match: 'qwen2.5-32b', tokens: 131_072 },
+    { match: 'qwen2.5-7b', tokens: 131_072 },
+    { match: /qwen2\.5|qwen-2\.5/, tokens: 131_072 },
+    { match: /qwen/, tokens: 32_768 },
+
+    { match: 'grok-3', tokens: 131_072 },
+    { match: 'grok-2', tokens: 131_072 },
+    { match: 'grok-1.5', tokens: 131_072 },
+    { match: /grok/, tokens: 131_072 },
+
+    { match: 'llama3-groq-70b', tokens: 8_192 },
+    { match: 'llama3-groq-8b', tokens: 8_192 },
+    { match: 'gemma2-9b-it', tokens: 8_192 },
+    { match: 'command-r-plus', tokens: 128_000 },
+    { match: 'command-r', tokens: 128_000 },
+    { match: /command/, tokens: 128_000 },
+
+    { match: /sonar/, tokens: 127_072 },
+    { match: /perplexity/, tokens: 127_072 },
+
+    { match: /fireworks/, tokens: 131_072 },
+];
+
+/**
+ * Retourne la vraie limite de contexte (en tokens) pour un modèle donné.
+ * La recherche se fait d'abord sur le nom exact (sous-chaîne),
+ * puis sur les RegExp, dans l'ordre de déclaration (du plus spécifique au plus général).
+ */
+export function getCloudModelLimit(model: string, provider: string): number {
+    const m = model.toLowerCase().trim();
+    const p = provider.toLowerCase();
+
+    for (const entry of MODEL_CONTEXT_LIMITS) {
+        if (typeof entry.match === 'string') {
+            if (m.includes(entry.match)) return entry.tokens;
+        } else {
+            if (entry.match.test(m)) return entry.tokens;
+        }
+    }
+
+    switch (p) {
+        case 'gemini': return 1_048_576;
+        case 'anthropic': return 200_000;
+        case 'openai': return 128_000;
+        case 'deepseek': return 128_000;
+        case 'groq': return 32_768;
+        case 'mistral': return 131_072;
+        case 'together': return 131_072;
+        case 'openrouter': return 128_000;
+        case 'cohere': return 128_000;
+        case 'xai': return 131_072;
+        case 'fireworks': return 131_072;
+        case 'perplexity': return 127_072;
+        default: return 128_000;
+    }
+}
+
 const VISION_MODELS: Record<string, string[]> = {
     'gemini': ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
     'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
@@ -92,15 +219,49 @@ function migrateKeyEntry(raw: any): ApiKeyEntry | null {
 
 export class OllamaClient {
     readonly router: ProviderRouter;
+    private _secretStore?: SecretKeyStore;
+    private _secretStoreReady = false;
+    private _modelConfigManager?: ModelConfigManager;
 
-    constructor() {
+    constructor(modelConfigManager?: ModelConfigManager) {
         this.router = new ProviderRouter();
+        this._modelConfigManager = modelConfigManager;
         this.router.registerProvider('http://localhost:11434', 'Ollama Local', 'local');
+        const lmStudioUrl = this._getLmStudioUrl();
+        this.router.registerProvider(lmStudioUrl, 'LM Studio', 'lmstudio');
         this._syncProvidersToRouter();
+    }
+
+    async initSecretStore(secrets: vscode.SecretStorage): Promise<number> {
+        this._secretStore = new SecretKeyStore(secrets);
+        const migrated = await this._secretStore.migrateFromSettings();
+        this._secretStoreReady = true;
+        await this._syncSecretKeysToRouter();
+        if (migrated > 0) {
+            console.log(`[Antigravity] ${migrated} clé(s) migrée(s) vers SecretStorage.`);
+        }
+        return migrated;
+    }
+
+    get secretStore(): SecretKeyStore | undefined {
+        return this._secretStore;
+    }
+
+    private async _syncSecretKeysToRouter(): Promise<void> {
+        if (!this._secretStore) return;
+        const entries = await this._secretStore.getAllKeysWithSecrets();
+        for (const entry of entries) {
+            if (!entry.url) continue;
+            this.router.registerProvider(entry.url, entry.name, this._detectProvider(entry.url), entry.key);
+            if (entry.rateLimitedUntil && entry.rateLimitedUntil > Date.now()) {
+                this.router.reportRateLimit(entry.url, entry.rateLimitedUntil - Date.now(), entry.key);
+            }
+        }
     }
 
     private _getConfig() { return vscode.workspace.getConfiguration('local-ai'); }
     private _getBaseUrl(): string { return this._getConfig().get<string>('ollamaUrl') || 'http://localhost:11434'; }
+    private _getLmStudioUrl(): string { return this._getConfig().get<string>('lmStudioUrl') || 'http://localhost:1234/v1'; }
 
     _detectProvider(url: string): string { return detectProviderName(url); }
     isCloud(url?: string): boolean { return isCloudUrl(url || this._getBaseUrl()); }
@@ -120,12 +281,38 @@ export class OllamaClient {
         return raw.map(migrateKeyEntry).filter((k): k is ApiKeyEntry => k !== null);
     }
 
+    async getApiKeysAsync(): Promise<ApiKeyEntry[]> {
+        if (this._secretStore && this._secretStoreReady) {
+            const entries = await this._secretStore.getAllKeysWithSecrets();
+            return entries.map(e => ({
+                key: e.key,
+                name: e.name,
+                url: e.url,
+                platform: e.platform,
+                rateLimitedUntil: e.rateLimitedUntil,
+                addedAt: e.addedAt,
+            }));
+        }
+        return this.getApiKeys();
+    }
+
     private async _saveApiKeys(keys: ApiKeyEntry[]): Promise<void> {
         await this._getConfig().update('apiKeys', keys, vscode.ConfigurationTarget.Global);
     }
 
     async addApiKey(entry: Omit<ApiKeyEntry, 'addedAt'>): Promise<{ success: boolean; reason?: string }> {
         if (!entry.url) return { success: false, reason: 'Une URL est requise.' };
+
+        if (this._secretStore && this._secretStoreReady) {
+            const existing = await this._secretStore.findByUrlAndKey(entry.url, entry.key);
+            if (existing) {
+                return { success: false, reason: 'Ce provider avec cette clé est déjà configuré.' };
+            }
+            await this._secretStore.storeKey(entry.name, entry.url, entry.key, entry.platform);
+            this.router.registerProvider(entry.url, entry.name, this._detectProvider(entry.url), entry.key);
+            return { success: true };
+        }
+
         const keys = this.getApiKeys();
         if (keys.find(k => k.url === entry.url && k.key === entry.key)) {
             return { success: false, reason: 'Ce provider avec cette clé est déjà configuré.' };
@@ -137,6 +324,15 @@ export class OllamaClient {
     }
 
     async updateApiKey(keyValue: string, url: string, updates: Partial<Omit<ApiKeyEntry, 'key' | 'addedAt'>>): Promise<void> {
+        if (this._secretStore && this._secretStoreReady) {
+            const all = await this._secretStore.getAllKeysWithSecrets();
+            const entry = all.find(k => k.key === keyValue && k.url === url);
+            if (entry) {
+                await this._secretStore.updateKeyMeta(entry.id, updates);
+                await this._syncSecretKeysToRouter();
+                return;
+            }
+        }
         const keys = this.getApiKeys();
         const idx = keys.findIndex(k => k.key === keyValue && k.url === url);
         if (idx === -1) return;
@@ -146,6 +342,16 @@ export class OllamaClient {
     }
 
     async deleteApiKey(keyValue: string, url: string): Promise<void> {
+        if (this._secretStore && this._secretStoreReady) {
+            const all = await this._secretStore.getAllKeysWithSecrets();
+            const entry = all.find(k => k.key === keyValue && k.url === url);
+            if (entry) {
+                await this._secretStore.deleteKey(entry.id);
+                this.router.unregisterProvider(url, keyValue);
+                await this._syncSecretKeysToRouter();
+                return;
+            }
+        }
         const keys = this.getApiKeys().filter(k => !(k.key === keyValue && k.url === url));
         await this._saveApiKeys(keys);
         this.router.unregisterProvider(url);
@@ -153,6 +359,16 @@ export class OllamaClient {
     }
 
     async resetKeyCooldown(keyValue: string, url: string): Promise<void> {
+        if (this._secretStore && this._secretStoreReady) {
+            const all = await this._secretStore.getAllKeysWithSecrets();
+            const entry = all.find(k => k.key === keyValue && k.url === url);
+            if (entry) {
+                await this._secretStore.resetKeyCooldown(entry.id);
+                this.router.setAvailable(url, true, keyValue);
+                this.router.liftSuspension(url, keyValue);
+                return;
+            }
+        }
         const keys = this.getApiKeys();
         const idx = keys.findIndex(k => k.key === keyValue && k.url === url);
         if (idx === -1) return;
@@ -165,6 +381,19 @@ export class OllamaClient {
     getApiKeyStatuses(): ApiKeyStatus[] {
         const now = Date.now();
         return this.getApiKeys().map(entry => {
+            if (!entry.key) return { entry, status: 'no-key' as ApiKeyStatusCode, statusIcon: '🔴', statusLabel: 'Pas de clé' };
+            if (entry.rateLimitedUntil && entry.rateLimitedUntil > now) {
+                const secsLeft = Math.ceil((entry.rateLimitedUntil - now) / 1000);
+                return { entry, status: 'cooldown' as ApiKeyStatusCode, cooldownSecsLeft: secsLeft, statusIcon: '🟡', statusLabel: `Cooldown ${secsLeft}s` };
+            }
+            return { entry, status: 'available' as ApiKeyStatusCode, statusIcon: '🟢', statusLabel: 'Disponible' };
+        });
+    }
+
+    async getApiKeyStatusesAsync(): Promise<ApiKeyStatus[]> {
+        const now = Date.now();
+        const keys = await this.getApiKeysAsync();
+        return keys.map(entry => {
             if (!entry.key) return { entry, status: 'no-key' as ApiKeyStatusCode, statusIcon: '🔴', statusLabel: 'Pas de clé' };
             if (entry.rateLimitedUntil && entry.rateLimitedUntil > now) {
                 const secsLeft = Math.ceil((entry.rateLimitedUntil - now) / 1000);
@@ -195,14 +424,26 @@ export class OllamaClient {
     }
 
     getTokenBudget(model: string, targetUrl?: string): TokenBudget {
-        if (this.isCloud(targetUrl)) return { used: 0, max: 100_000 * 4, isCloud: true };
-        // Synchronous fallback for local models
+        if (this.isCloud(targetUrl) && this._detectProvider(targetUrl || '') !== 'lmstudio') {
+            const provider = this._detectProvider(targetUrl || '');
+            const limit = getCloudModelLimit(model, provider);
+            return { used: 0, max: limit * 4, isCloud: true };
+        }
         return { used: 0, max: 8192 * 4, isCloud: false };
     }
 
     async getTokenBudgetAsync(model: string, targetUrl?: string): Promise<TokenBudget> {
-        if (this.isCloud(targetUrl)) return { used: 0, max: 100_000 * 4, isCloud: true };
-        const tokens = await getLocalContextSize(model, targetUrl || this._getBaseUrl());
+        if (this.isCloud(targetUrl) && this._detectProvider(targetUrl || '') !== 'lmstudio') {
+            const provider = this._detectProvider(targetUrl || '');
+            const limit = getCloudModelLimit(model, provider);
+            return { used: 0, max: limit * 4, isCloud: true };
+        }
+        const url = targetUrl || this._getBaseUrl();
+        if (this._modelConfigManager) {
+            const config = await this._modelConfigManager.getConfig(model, url);
+            return { used: 0, max: config.contextLimit * 4, isCloud: false };
+        }
+        const tokens = await getLocalContextSize(model, url);
         return { used: 0, max: tokens * 4, isCloud: false };
     }
 
@@ -268,7 +509,67 @@ nouveau_code
         const model = modelOverride || this._getConfig().get<string>('defaultModel') || 'llama3';
         const fullPrompt = context ? `Contexte du projet:\n${context}\n\n---\nQuestion: ${prompt}` : prompt;
         const slot = await this.router.selectProvider(taskType, targetUrl, !!(images?.length), preferredApiKey);
+
+        const isLocalProvider = slot.provider === 'local' || slot.provider === 'lmstudio';
+        if (isLocalProvider) {
+            const resolvedModel = await this._resolveLocalModel(model, slot.url, slot.provider);
+            if (resolvedModel !== model) {
+                vscode.window.showInformationMessage(
+                    `💡 Modèle "${model}" non trouvé — utilisation de "${resolvedModel}" (le plus léger disponible)`
+                );
+            }
+            return this._doRequest(slot, resolvedModel, fullPrompt, onUpdate, 0, images, taskType, signal);
+        }
+
         return this._doRequest(slot, model, fullPrompt, onUpdate, 0, images, taskType, signal);
+    }
+
+    private async _resolveLocalModel(requestedModel: string, url: string, provider: string): Promise<string> {
+        try {
+            let installedModels: string[];
+            if (provider === 'lmstudio') {
+                installedModels = await listOpenAICompatModels(url);
+            } else {
+                installedModels = await listLocalModels(url);
+            }
+
+            if (installedModels.length === 0) return requestedModel;
+
+            const requested = requestedModel.toLowerCase().replace(/:latest$/, '');
+            const isInstalled = installedModels.some(m =>
+                m.toLowerCase().replace(/:latest$/, '') === requested ||
+                m.toLowerCase().startsWith(requested + ':')
+            );
+
+            if (isInstalled) return requestedModel;
+
+            return this._pickLightestModel(installedModels);
+        } catch {
+            return requestedModel;
+        }
+    }
+
+    private _pickLightestModel(models: string[]): string {
+        const parseWeight = (name: string): number => {
+            const n = name.toLowerCase();
+
+            const sizeMatch = n.match(/[:\-_](\d+(?:\.\d+)?)\s*b/);
+            const sizeB = sizeMatch ? parseFloat(sizeMatch[1]) : 7;
+            let quantScore = 4;
+            if (n.includes('q2')) quantScore = 2;
+            else if (n.includes('q3')) quantScore = 3;
+            else if (n.includes('q4')) quantScore = 4;
+            else if (n.includes('q5')) quantScore = 5;
+            else if (n.includes('q6')) quantScore = 6;
+            else if (n.includes('q8')) quantScore = 8;
+            else if (n.includes('fp16') || n.includes('f16')) quantScore = 16;
+
+            return sizeB * 10 + quantScore;
+        };
+
+        const sorted = [...models].sort((a, b) => parseWeight(a) - parseWeight(b));
+        console.log(`[OllamaClient] Modèles triés par poids: ${sorted.slice(0, 3).join(', ')} ...`);
+        return sorted[0];
     }
 
     async generateResponse(
@@ -293,7 +594,7 @@ nouveau_code
         try {
             let result: string;
 
-            if (isLocalUrl(url) || this._detectProvider(url) === 'ollama-cloud') {
+            if (isLocalUrl(url) && this._detectProvider(url) !== 'lmstudio' && this._detectProvider(url) !== 'openai-compat' || this._detectProvider(url) === 'ollama-cloud') {
                 result = await localStream(
                     { model, prompt: fullPrompt, systemPrompt, images, signal, baseUrl: url, apiKey },
                     onUpdate
@@ -359,29 +660,70 @@ nouveau_code
     async listModels(): Promise<string[]> {
         const url = this._getBaseUrl();
         const provider = this._detectProvider(url);
+        const { key } = this._getAvailableKey(url);
+
+        if (provider === 'lmstudio' || provider === 'openai-compat' || provider === 'xai') {
+            let finalUrl = url;
+            if (provider === 'xai' && !url.endsWith('/v1')) {
+                finalUrl = `${url.replace(/\/+$/, '')}/v1`;
+            }
+            return listOpenAICompatModels(finalUrl, key);
+        }
         if (isLocalUrl(url) || provider === 'ollama-cloud') {
-            const { key } = this._getAvailableKey(url);
             return listLocalModels(url, key);
         }
-        const { key } = this._getAvailableKey(url);
         return listOpenAICompatModels(url, key);
     }
 
     async listAllModels(): Promise<{ name: string; isLocal: boolean; url: string; provider: string }[]> {
         const result: { name: string; isLocal: boolean; url: string; provider: string }[] = [];
         const seen = new Set<string>();
-        const LOCAL_URL = 'http://localhost:11434';
 
-        for (const m of await listLocalModels(LOCAL_URL)) {
-            const k = `${LOCAL_URL}||${m}`;
-            if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: LOCAL_URL, provider: 'local' }); }
-        }
+        const OLLAMA_URLS = [
+            'http://localhost:11434',
+            'http://127.0.0.1:11434',
+        ];
 
         const configUrl = this._getBaseUrl().replace(/\/+$/, '');
-        if (isLocalUrl(configUrl) && configUrl !== LOCAL_URL && configUrl !== 'http://127.0.0.1:11434') {
-            for (const m of await listLocalModels(configUrl)) {
-                const k = `${configUrl}||${m}`;
-                if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: configUrl, provider: 'local' }); }
+        if (configUrl && !OLLAMA_URLS.includes(configUrl) && isLocalUrl(configUrl) && this._detectProvider(configUrl) !== 'lmstudio') {
+            OLLAMA_URLS.push(configUrl);
+        }
+
+        for (const ollamaUrl of OLLAMA_URLS) {
+            try {
+                const localModels = await listLocalModels(ollamaUrl);
+                if (localModels.length > 0) {
+                    console.log(`[OllamaClient] ✓ Ollama trouvé sur ${ollamaUrl}: ${localModels.length} modèles`);
+                    for (const m of localModels) {
+                        const k = `${ollamaUrl}||${m}`;
+                        if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: ollamaUrl, provider: 'local' }); }
+                    }
+                    break;
+                }
+            } catch (e) {
+                console.warn(`[OllamaClient] Ollama inaccessible sur ${ollamaUrl}: ${e}`);
+            }
+        }
+
+        const LMSTUDIO_URLS = [
+            this._getLmStudioUrl(),
+            'http://localhost:1234/v1',
+            'http://127.0.0.1:1234/v1',
+        ].filter((v, i, arr) => arr.indexOf(v) === i);
+
+        for (const lmUrl of LMSTUDIO_URLS) {
+            try {
+                const lmModels = await listOpenAICompatModels(lmUrl);
+                if (lmModels.length > 0) {
+                    console.log(`[OllamaClient] ✓ LM Studio trouvé sur ${lmUrl}: ${lmModels.length} modèles`);
+                    for (const m of lmModels) {
+                        const k = `${lmUrl}||${m}`;
+                        if (!seen.has(k)) { seen.add(k); result.push({ name: m, isLocal: true, url: lmUrl, provider: 'lmstudio' }); }
+                    }
+                    break;
+                }
+            } catch (e) {
+                console.warn(`[OllamaClient] LM Studio inaccessible sur ${lmUrl}: ${e}`);
             }
         }
 
@@ -392,9 +734,17 @@ nouveau_code
             const provider = this._detectProvider(baseUrl);
             let list: string[] = [];
             try {
-                if (provider === 'gemini' && entry.key) list = await listGeminiModels(entry.key);
-                else if (provider === 'ollama-cloud') list = await listLocalModels(baseUrl, entry.key);
-                else list = await listOpenAICompatModels(baseUrl, entry.key);
+                if (provider === 'gemini' && entry.key) {
+                    list = await listGeminiModels(entry.key);
+                } else if (provider === 'ollama-cloud' || (isLocalUrl(baseUrl) && provider !== 'lmstudio')) {
+                    list = await listLocalModels(baseUrl, entry.key);
+                } else {
+                    let finalUrl = baseUrl;
+                    if (provider === 'xai' && !baseUrl.endsWith('/v1')) {
+                        finalUrl = `${baseUrl}/v1`;
+                    }
+                    list = await listOpenAICompatModels(finalUrl, entry.key);
+                }
             } catch { }
             for (const m of list) {
                 const k = `${baseUrl}||${m}`;
@@ -409,7 +759,20 @@ nouveau_code
         const url = this._getBaseUrl();
         const provider = this._detectProvider(url);
         const { key } = this._getAvailableKey(url);
-        if (isLocalUrl(url) || provider === 'ollama-cloud') return checkLocalConnection(url, key);
+
+        if (provider === 'lmstudio' || provider === 'openai-compat' || provider === 'xai') {
+            let finalUrl = url;
+            if (provider === 'xai' && !url.endsWith('/v1')) {
+                finalUrl = `${url.replace(/\/+$/, '')}/v1`;
+            }
+            try { await listOpenAICompatModels(finalUrl, key); return true; }
+            catch { return false; }
+        }
+
+        if (isLocalUrl(url) || provider === 'ollama-cloud') {
+            return checkLocalConnection(url, key);
+        }
+
         try { await listOpenAICompatModels(url, key); return true; }
         catch { return false; }
     }

@@ -3,18 +3,28 @@ import { AttachedImage } from './ollamaClient';
 export type CloudProviderType =
     | 'openai-compat'
     | 'gemini'
+    | 'anthropic'
+    | 'xai'
     | 'unknown';
 
 export function detectProviderName(url: string): string {
     const u = url.toLowerCase();
-    if (u.includes('localhost') || u.includes('127.0.0.1')) return 'local';
-    if (u.includes('generativelanguage.googleapis.com'))    return 'gemini';
-    if (u.includes('openai.com'))                           return 'openai';
-    if (u.includes('openrouter.ai'))                        return 'openrouter';
+    if (u.includes('localhost') || u.includes('127.0.0.1')) {
+        if (u.includes(':1234') || u.endsWith('/v1')) return 'lmstudio';
+        return 'local';
+    }
+    if (u.includes('generativelanguage.googleapis.com')) return 'gemini';
+    if (u.includes('openai.com')) return 'openai';
+    if (u.includes('openrouter.ai')) return 'openrouter';
     if (u.includes('together.xyz') || u.includes('together.ai')) return 'together';
-    if (u.includes('mistral.ai'))                           return 'mistral';
-    if (u.includes('groq.com'))                             return 'groq';
+    if (u.includes('mistral.ai')) return 'mistral';
+    if (u.includes('groq.com')) return 'groq';
     if (u.includes('anthropic.com') || u.includes('claude.ai')) return 'anthropic';
+    if (u.includes('deepseek.com')) return 'deepseek';
+    if (u.includes('cohere.com') || u.includes('cohere.ai')) return 'cohere';
+    if (u.includes('perplexity.ai')) return 'perplexity';
+    if (u.includes('api.x.ai') || u.includes('grok')) return 'xai';
+    if (u.includes('fireworks.ai')) return 'fireworks';
     if (u.includes('api.ollama.com') || u.includes('ollama.ai')) return 'ollama-cloud';
     return 'cloud';
 }
@@ -22,13 +32,18 @@ export function detectProviderName(url: string): string {
 export function detectCloudType(url: string): CloudProviderType {
     const u = url.toLowerCase();
     if (u.includes('generativelanguage.googleapis.com')) return 'gemini';
+    if (u.includes('anthropic.com') || u.includes('claude.ai')) return 'anthropic';
+    if (u.includes('api.x.ai') || u.includes('grok')) return 'xai';
     if (!u.includes('localhost') && !u.includes('127.0.0.1')) return 'openai-compat';
+    if (u.includes(':1234') || u.endsWith('/v1')) return 'openai-compat'; // LM Studio
     return 'unknown';
 }
 
 export function isCloudUrl(url: string): boolean {
     const u = (url || '').toLowerCase();
-    return !!u && !u.includes('localhost') && !u.includes('127.0.0.1');
+    if (!u) return false;
+    if (u.includes('localhost') || u.includes('127.0.0.1')) return false;
+    return true;
 }
 
 export async function listGeminiModels(apiKey: string): Promise<string[]> {
@@ -54,12 +69,18 @@ export async function listOpenAICompatModels(baseUrl: string, apiKey?: string): 
             headers['X-Title'] = 'VSCode Antigravity';
         }
         const res = await fetch(endpoint, { headers, signal: AbortSignal.timeout(5000) });
-        if (!res.ok) return [];
+        if (!res.ok) {
+            console.warn(`[CloudProvider] listOpenAICompatModels failed for ${url}: ${res.status} ${res.statusText}`);
+            return [];
+        }
         const data: any = await res.json();
         const all: string[] = (data?.data || []).map((m: any) => m.id as string).filter(Boolean);
         if (url.includes('openrouter')) return all.filter(m => m.endsWith(':free'));
         return all;
-    } catch { return []; }
+    } catch (e: any) {
+        console.warn(`[CloudProvider] listOpenAICompatModels error for ${baseUrl}: ${e.message}`);
+        return [];
+    }
 }
 
 export interface CloudRequestOptions {
@@ -106,7 +127,7 @@ export async function openAICompatStream(
         model: opts.model,
         messages: [
             { role: 'system', content: opts.systemPrompt },
-            { role: 'user',   content: userContent },
+            { role: 'user', content: userContent },
         ],
         stream: true,
     };
@@ -224,6 +245,105 @@ export async function geminiStream(
     return fullResponse;
 }
 
+export async function anthropicStream(
+    opts: CloudRequestOptions,
+    onChunk: (text: string) => void
+): Promise<string> {
+    const baseUrl = opts.baseUrl.replace(/\/+$/, '');
+    const endpoint = `${baseUrl}/messages`;
+
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-api-key': opts.apiKey,
+        'anthropic-version': '2023-06-01',
+    };
+
+    const contentParts: any[] = [];
+    if (opts.images && opts.images.length > 0) {
+        for (const img of opts.images) {
+            contentParts.push({
+                type: 'image',
+                source: {
+                    type: 'base64',
+                    media_type: img.mimeType,
+                    data: img.base64,
+                },
+            });
+        }
+    }
+    contentParts.push({ type: 'text', text: opts.prompt });
+
+    const reqBody: any = {
+        model: opts.model,
+        max_tokens: 8192,
+        stream: true,
+        system: opts.systemPrompt,
+        messages: [
+            { role: 'user', content: contentParts },
+        ],
+    };
+
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(reqBody),
+        signal: opts.signal,
+    });
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => response.statusText);
+        throw new Error(`Anthropic HTTP ${response.status}: ${errText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Impossible de lire le flux Anthropic.');
+
+    const decoder = new TextDecoder();
+    let fullResponse = '';
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+            const clean = line.trim();
+            if (!clean || clean.startsWith('event:')) continue;
+            if (clean.startsWith('data: ')) {
+                const jsonStr = clean.slice(6);
+                if (jsonStr === '[DONE]') continue;
+                try {
+                    const data = JSON.parse(jsonStr);
+                    if (data.type === 'content_block_delta' && data.delta?.text) {
+                        fullResponse += data.delta.text;
+                        onChunk(data.delta.text);
+                    }
+                    if (data.type === 'error') {
+                        throw new Error(`Anthropic stream error: ${data.error?.message || 'Unknown'}`);
+                    }
+                } catch (e: any) {
+                    if (e.message && !e.message.includes('JSON')) throw e;
+                }
+            }
+        }
+    }
+
+    if (buffer.trim() && buffer.startsWith('data: ')) {
+        try {
+            const data = JSON.parse(buffer.slice(6));
+            if (data.type === 'content_block_delta' && data.delta?.text) {
+                fullResponse += data.delta.text;
+                onChunk(data.delta.text);
+            }
+        } catch { }
+    }
+
+    return fullResponse;
+}
+
 export async function cloudStream(
     opts: CloudRequestOptions,
     onChunk: (text: string) => void
@@ -232,6 +352,12 @@ export async function cloudStream(
 
     if (type === 'gemini') {
         return geminiStream(opts, onChunk);
+    } else if (type === 'anthropic') {
+        return anthropicStream(opts, onChunk);
+    } else if (type === 'xai') {
+        const baseUrl = opts.baseUrl.replace(/\/+$/, '');
+        const finalUrl = baseUrl.endsWith('/v1') ? baseUrl : `${baseUrl}/v1`;
+        return openAICompatStream({ ...opts, baseUrl: finalUrl }, onChunk);
     } else if (type === 'openai-compat') {
         return openAICompatStream(opts, onChunk);
     } else {

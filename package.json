@@ -2,7 +2,7 @@
   "name": "local-ai-for-antigravity-ide",
   "displayName": "Local AI Integration",
   "description": "Integrate local AI models (Ollama) into VS Code with project context.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "antigravity",
   "icon": "media/icon.png",
   "engines": {
@@ -35,6 +35,46 @@
         "command": "local-ai.runAgent",
         "title": "Antigravity: Lancer l'agent autonome",
         "icon": "$(robot)"
+      },
+      {
+        "command": "local-ai.toggleInlineCompletion",
+        "title": "Antigravity: Basculer la complétion en ligne",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "local-ai.resetChat",
+        "title": "🔄 Réinitialiser le Chat",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.configureModel",
+        "title": "⚙️ Configurer un Modèle",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.exportSession",
+        "title": "💾 Exporter la Session",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.importSession",
+        "title": "📥 Importer une Session",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.createTemplate",
+        "title": "➕ Créer un Template Custom",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.showModelInfo",
+        "title": "ℹ️ Informations du Modèle",
+        "category": "Local AI"
+      },
+      {
+        "command": "local-ai.resetModelConfig",
+        "title": "🔧 Réinitialiser Config Modèle",
+        "category": "Local AI"
       }
     ],
     "viewsContainers": {
@@ -63,6 +103,11 @@
           "type": "string",
           "default": "http://localhost:11434",
           "description": "The URL of your local Ollama server."
+        },
+        "local-ai.lmStudioUrl": {
+          "type": "string",
+          "default": "http://localhost:1234/v1",
+          "description": "The URL of your local LM Studio server (OpenAI compatible API)."
         },
         "local-ai.defaultModel": {
           "type": "string",
@@ -95,6 +140,16 @@
               }
             }
           }
+        },
+        "local-ai.enableInlineCompletion": {
+          "type": "boolean",
+          "default": false,
+          "description": "Activer la complétion de code en ligne (style Copilot)."
+        },
+        "local-ai.inlineCompletionModel": {
+          "type": "string",
+          "default": "llama3",
+          "description": "Le modèle à utiliser pour la complétion en ligne (recommandé: modèle rapide comme llama3:8b ou qwen2.5-coder)."
         }
       }
     },
@@ -130,9 +185,9 @@
     "@types/vscode": "1.107.0",
     "@types/mocha": "10.0.10",
     "@types/node": "^20.0.0",
-    "@typescript-eslint/eslint-plugin": "6.21.0",
-    "@typescript-eslint/parser": "6.21.0",
-    "eslint": "8.57.1",
+    "@typescript-eslint/eslint-plugin": "8.57.0",
+    "@typescript-eslint/parser": "8.57.0",
+    "eslint": "10.0.3",
     "glob": "13.0.6",
     "mocha": "11.7.5",
     "typescript": "5.x",
