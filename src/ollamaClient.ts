@@ -509,7 +509,67 @@ nouveau_code
         const model = modelOverride || this._getConfig().get<string>('defaultModel') || 'llama3';
         const fullPrompt = context ? `Contexte du projet:\n${context}\n\n---\nQuestion: ${prompt}` : prompt;
         const slot = await this.router.selectProvider(taskType, targetUrl, !!(images?.length), preferredApiKey);
+
+        const isLocalProvider = slot.provider === 'local' || slot.provider === 'lmstudio';
+        if (isLocalProvider) {
+            const resolvedModel = await this._resolveLocalModel(model, slot.url, slot.provider);
+            if (resolvedModel !== model) {
+                vscode.window.showInformationMessage(
+                    `💡 Modèle "${model}" non trouvé — utilisation de "${resolvedModel}" (le plus léger disponible)`
+                );
+            }
+            return this._doRequest(slot, resolvedModel, fullPrompt, onUpdate, 0, images, taskType, signal);
+        }
+
         return this._doRequest(slot, model, fullPrompt, onUpdate, 0, images, taskType, signal);
+    }
+
+    private async _resolveLocalModel(requestedModel: string, url: string, provider: string): Promise<string> {
+        try {
+            let installedModels: string[];
+            if (provider === 'lmstudio') {
+                installedModels = await listOpenAICompatModels(url);
+            } else {
+                installedModels = await listLocalModels(url);
+            }
+
+            if (installedModels.length === 0) return requestedModel;
+
+            const requested = requestedModel.toLowerCase().replace(/:latest$/, '');
+            const isInstalled = installedModels.some(m =>
+                m.toLowerCase().replace(/:latest$/, '') === requested ||
+                m.toLowerCase().startsWith(requested + ':')
+            );
+
+            if (isInstalled) return requestedModel;
+
+            return this._pickLightestModel(installedModels);
+        } catch {
+            return requestedModel;
+        }
+    }
+
+    private _pickLightestModel(models: string[]): string {
+        const parseWeight = (name: string): number => {
+            const n = name.toLowerCase();
+
+            const sizeMatch = n.match(/[:\-_](\d+(?:\.\d+)?)\s*b/);
+            const sizeB = sizeMatch ? parseFloat(sizeMatch[1]) : 7;
+            let quantScore = 4;
+            if (n.includes('q2')) quantScore = 2;
+            else if (n.includes('q3')) quantScore = 3;
+            else if (n.includes('q4')) quantScore = 4;
+            else if (n.includes('q5')) quantScore = 5;
+            else if (n.includes('q6')) quantScore = 6;
+            else if (n.includes('q8')) quantScore = 8;
+            else if (n.includes('fp16') || n.includes('f16')) quantScore = 16;
+
+            return sizeB * 10 + quantScore;
+        };
+
+        const sorted = [...models].sort((a, b) => parseWeight(a) - parseWeight(b));
+        console.log(`[OllamaClient] Modèles triés par poids: ${sorted.slice(0, 3).join(', ')} ...`);
+        return sorted[0];
     }
 
     async generateResponse(

@@ -2010,6 +2010,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             "        .then(function(d){ var n=(d.models||[]).length; st.className='ob-status ok'; tx.textContent='✓ Ollama connected — '+n+' model'+(n!==1?'s':'')+' available'; setTimeout(function(){ obGo(3); },1200); })",
             "        .catch(function(){ st.className='ob-status fail'; tx.textContent='✗ Not found — is Ollama running?'; });",
             "}",
+            "function obTestLmStudio() {",
+            "    var st = document.getElementById('obLmStatus');",
+            "    var tx = document.getElementById('obLmStatusText');",
+            "    if (!st||!tx) return;",
+            "    st.className='ob-status testing'; tx.textContent='Testing localhost:1234…';",
+            "    fetch('http://localhost:1234/v1/models',{signal:AbortSignal.timeout(4000)})",
+            "        .then(function(r){ if(r.ok) return r.json(); throw new Error('HTTP '+r.status); })",
+            "        .then(function(d){ var n=(d.data||[]).length; st.className='ob-status ok'; tx.textContent='✓ LM Studio connected — '+n+' model'+(n!==1?'s':'')+' loaded'; setTimeout(function(){ obGo(3); },1200); })",
+            "        .catch(function(){ st.className='ob-status fail'; tx.textContent='✗ Not found — start the Local Server in LM Studio'; });",
+            "}",
             "function obSaveGemini() {",
             "    var inp = document.getElementById('obGeminiKey');",
             "    var key = inp ? inp.value.trim() : '';",
@@ -2560,20 +2570,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             <span class="ob-box-icon">3.</span>
                             <span>Auto-detected on <code>localhost:11434</code> ✓</span>
                         </div>
+                        <div class="ob-box-row" style="margin-top:4px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.05);font-size:10px;color:#666;">
+                            <span class="ob-box-icon">💡</span>
+                            <span>If the requested model isn't installed, Antigravity auto-selects the <b>lightest available model</b></span>
+                        </div>
                     </div>
                     <div class="ob-status idle" id="obOllamaStatus">
                         <div class="ob-status-dot"></div>
                         <span id="obOllamaStatusText">Not tested</span>
                     </div>
                     <div class="ob-btns">
-                        <button class="ob-btn cyan" onclick="obTestOllama()">🔍 Test connection</button>
+                        <button class="ob-btn cyan" onclick="obTestOllama()">🔍 Test Ollama</button>
                         <button class="ob-btn" onclick="obGo(3)">Skip →</button>
                     </div>
-                    <div class="ob-eyebrow" style="margin-top:4px;">Option B — Local GUI</div>
-                    <p class="ob-desc" style="margin-top:-4px;font-size:11px;">
-                        Using <a href="https://lmstudio.ai" target="_blank">LM Studio</a>?
-                        Start its local server — auto-detected on <code style="background:rgba(0,210,255,0.08);color:#00d2ff;padding:1px 5px;border-radius:4px;font-size:10px;font-family:'Fira Code',monospace;">localhost:1234</code>
-                    </p>
+
+                    <div class="ob-eyebrow" style="margin-top:16px;">Option B — Local GUI</div>
+                    <div class="ob-h2" style="font-size:16px;margin-top:2px;">💻 LM Studio</div>
+                    <p class="ob-desc" style="font-size:11px;margin-top:2px;">Download <a href="https://lmstudio.ai" target="_blank">lmstudio.ai ↗</a>, load a model, then enable <b>Local Server</b> (port 1234).</p>
+                    <div class="ob-status idle" id="obLmStatus">
+                        <div class="ob-status-dot"></div>
+                        <span id="obLmStatusText">Not tested</span>
+                    </div>
+                    <div class="ob-btns" style="margin-top:6px;">
+                        <button class="ob-btn" style="background:rgba(116,170,156,0.15);border-color:rgba(116,170,156,0.4);color:#74aa9c;" onclick="obTestLmStudio()">🔍 Test LM Studio</button>
+                    </div>
+
                     <div class="ob-skip" onclick="obGo(3)">I'll set this up later</div>
                 </div>
 
