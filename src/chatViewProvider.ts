@@ -1,4 +1,4 @@
-﻿import * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import { OllamaClient, ContextFile, ApiKeyStatus, estimateTokens, AttachedImage } from './ollamaClient';
@@ -1527,7 +1527,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             "function renderDropdown(filter) {",
             "    _currentFilter = filter || '';",
             "    var f = _currentFilter.toLowerCase().trim();",
-            "    var filtered = f ? _allModels.filter(function(x) { return x.name.toLowerCase().includes(f) || (x.provider||'').toLowerCase().includes(f); }) : _allModels;",
+            "    var filtered = f ? _allModels.filter(function(x) { ",
+            "        var n = (x.name || '').toLowerCase();",
+            "        var p = (x.provider || '').toLowerCase();",
+            "        return n.indexOf(f) !== -1 || p.indexOf(f) !== -1;",
+            "    }) : _allModels;",
             "    var listHtml = filtered.length === 0 ? '<div class=\"model-opt-empty\">Aucun résultat</div>'",
             "        : filtered.map(function(x, i) {",
             "            var c = providerColor(x.provider);",
@@ -1988,6 +1992,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             "function obOpen() {",
             "    var o = document.getElementById('obOverlay');",
             "    if (!o) return;",
+            "    _obCur = 1;",
             "    obGo(1);",
             "    o.style.transition = '';",
             "    o.style.opacity = '0';",

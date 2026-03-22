@@ -727,7 +727,7 @@ nouveau_code
             }
         }
 
-        for (const entry of this.getApiKeys()) {
+        for (const entry of await this.getApiKeysAsync()) {
             if (!entry.url) continue;
             const baseUrl = entry.url.replace(/\/+$/, '');
             if (isLocalUrl(baseUrl) && !entry.key) continue;
