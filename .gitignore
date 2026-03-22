@@ -6,3 +6,6 @@ out
 JAVASCRIPT_A_AJOUTER.js
 test-lm-studio.js
 test-lm-studio-ipv4.js
+tmp/fix_enc.js
+tmp/decode_html.js
+tmp/fix_html.js
