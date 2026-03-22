@@ -2038,7 +2038,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             "        .catch(function(){ if(st) st.className='ob-status ok'; if(tx) tx.textContent='✓ Key saved (connection test skipped)'; vscode.postMessage({type:'setupGeminiKey',key:key}); setTimeout(function(){ obGo(4); },1000); });",
             "}",
             "if (_showOnboarding) { document.getElementById('obOverlay').style.display = 'flex'; }",
-            "var _btnOb = document.getElementById('btnOnboarding'); if (_btnOb) { _btnOb.onclick = function() { obOpen(); }; }"
+            "var _btnOb = document.getElementById('btnOnboarding'); if (_btnOb) { _btnOb.onclick = function() { obOpen(); }; }",
+            "var _btnHome = document.getElementById('btnHome'); if (_btnHome) { _btnHome.onclick = function() { obOpen(); }; }"
         ].join("\n");
 
         return `<!DOCTYPE html>
@@ -2166,6 +2167,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div class="header">
         <span class="header-brand">ANTIGRAVITY</span>
         <div class="header-controls">
+            <button class="btn-cloud" id="btnHome" title="Accueil" style="padding:4px 8px; font-weight: 700;">🏠 Accueil</button>
             <button class="btn-cloud" id="btnCloud">☁️ Cloud</button>
             <button class="btn-cloud" id="btnOnboarding" title="Revoir le guide de démarrage" style="padding:4px 8px;">🛸</button>
             <div id="modelComboWrap">
