@@ -76,6 +76,11 @@ const tokenBar = document.getElementById('tokenBar');
 const terminalLog = document.getElementById('terminalLog');
 const scrollBtn = document.getElementById('scrollBtn');
 const termPermSelect = document.getElementById('termPermSelect');
+const modalOverlay = document.getElementById('modalOverlay');
+const modalCard = document.getElementById('modalCard');
+const modalBody = document.getElementById('modalBody');
+const modalTitle = document.getElementById('modalTitle');
+const modalClose = document.getElementById('modalClose');
 let contextFiles = [];
 let currentAiMsg = null;
 let currentAiText = '';
@@ -376,6 +381,65 @@ document.getElementById('btnAgent').onclick = function () {
     promptEl.value = '';
     vscode.postMessage({ type: 'runAgent', goal: goal });
 };
+
+function showModal(title, content) {
+    modalTitle.textContent = title;
+    modalBody.innerHTML = content;
+    modalOverlay.style.display = 'flex';
+}
+function closeModal() { modalOverlay.style.display = 'none'; }
+modalClose.onclick = closeModal;
+modalOverlay.onclick = function (e) { if (e.target === modalOverlay) closeModal(); };
+
+document.getElementById('btnSettings').onclick = function () {
+    vscode.postMessage({ type: 'getSettings' });
+};
+
+document.getElementById('btnHistory').onclick = function () {
+    vscode.postMessage({ type: 'getHistoryList' });
+};
+
+function renderSettings(settings) {
+    var html = '<div class="setting-item">' +
+        '<label class="setting-label">Multiplicateur de Contexte (0.5 à 4.0)</label>' +
+        '<input type="number" id="settingContextMult" class="setting-input" value="' + (settings.contextMult || 1) + '" step="0.1" min="0.5" max="4">' +
+        '<p style="font-size:10px;color:#666;margin-top:4px;">Augmente ou réduit artificiellement la capacité de l\'IA à voir de longs fichiers.</p>' +
+        '</div>' +
+        '<div class="setting-item">' +
+        '<label class="setting-label">Limite Globale de Tokens (Max)</label>' +
+        '<input type="number" id="settingMaxTokens" class="setting-input" value="' + (settings.maxTokens || 32000) + '" step="1000">' +
+        '</div>' +
+        '<button class="ob-btn cyan" style="width:100%" onclick="saveSettings()">💾 Sauvegarder</button>';
+    showModal('Paramètres Antigravity', html);
+}
+
+window.saveSettings = function () {
+    var mult = parseFloat(document.getElementById('settingContextMult').value);
+    var max = parseInt(document.getElementById('settingMaxTokens').value);
+    vscode.postMessage({ type: 'saveSettings', settings: { contextMult: mult, maxTokens: max } });
+    closeModal();
+    showNotification('✅ Paramètres sauvegardés', 'success');
+};
+
+function renderHistory(sessions) {
+    if (!sessions || sessions.length === 0) {
+        showModal('Historique', '<p style="color:#666;text-align:center;">Aucune session trouvée.</p>');
+        return;
+    }
+    var html = sessions.map(function (s) {
+        var date = new Date(s.timestamp).toLocaleString();
+        return '<div class="history-item" onclick="loadSession(\'' + s.id + '\')">' +
+            '<div class="history-time">' + date + '<span class="history-model">' + (s.model || 'N/A') + '</span></div>' +
+            '<div class="history-preview">' + escapeHtml(s.preview || '(Sans titre)') + '</div>' +
+            '</div>';
+    }).join('');
+    showModal('Historique des discussions', html);
+}
+
+window.loadSession = function (id) {
+    vscode.postMessage({ type: 'loadSession', id: id });
+    closeModal();
+};
 function stopAgent() { vscode.postMessage({ type: 'stopAgent' }); }
 function sendLspToAi() {
     if (!_currentLspFormatted) return;
@@ -567,7 +631,9 @@ window.addEventListener('message', function (e) {
         contextFiles = []; renderFilesBar();
         showNotification(m.templateName ? '🔄 Chat réinitialisé avec "' + m.templateName + '"' : '🔄 Nouveau chat créé', 'success');
     }
-    if (m.type === 'fileHistoryChanged') { /* ignore for now */ }
+    if (m.type === 'fileHistoryChanged') { }
+    if (m.type === 'settingsData') { renderSettings(m.settings); }
+    if (m.type === 'historyList') { renderHistory(m.sessions); }
 });
 
 vscode.postMessage({ type: 'getModels' });
@@ -577,10 +643,8 @@ vscode.postMessage({ type: 'getTerminalPermission' });
 
 var _currentLspFormatted = '';
 var _agentRunning = false;
-// window.SHOW_ONBOARDING is injected by chatViewProvider.ts via an inline <script> tag
 var _showOnboarding = (typeof window.SHOW_ONBOARDING !== 'undefined') ? window.SHOW_ONBOARDING : false;
 
-// ===== ONBOARDING =====
 var _obCur = 1;
 var _obTitles = {
     1: ['Mission Briefing', 'Configure your AI co-pilot in 60 seconds.'],

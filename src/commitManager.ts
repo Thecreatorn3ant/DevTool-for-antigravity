@@ -188,7 +188,8 @@ function buildCommitPrompt(
     recentCommits: string,
     branchName: string,
     hintType: ConventionalCommitType,
-    hintScope: string | null
+    hintScope: string | null,
+    chatIntent: string | null = null
 ): string {
     const filesSummary = diff.files.map(f => {
         const flags = [
@@ -215,6 +216,7 @@ function buildCommitPrompt(
 - Files changed: ${diff.files.length}
 - Total: +${diff.totalAdditions} / -${diff.totalDeletions} lines
 - Heuristic type hint: ${hintType}${hintScope ? ` (scope hint: ${hintScope})` : ''}
+${chatIntent ? `\n## User Intent (from chat history)\n${chatIntent}` : ''}
 
 ## Files modified
 ${filesSummary}
@@ -229,7 +231,8 @@ ${recentCommits || 'No recent commits available.'}
 1. Output ONLY valid JSON — no markdown fences, no extra text.
 2. Follow Conventional Commits: type(scope): description
 3. Use ONLY these types: feat | fix | refactor | chore | docs | test | perf | ci | style | revert | build
-4. Description: imperative mood, lowercase, max 72 chars, no trailing period
+4. Description: imperative mood, lowercase, max 72 chars, no trailing period.
+   *Analysez la différence LOGIQUE (Avant vs Après) pour décrire l'effet et non l'action technique.*
 5. Scope: optional, short (camelCase or kebab-case), inferred from files
 6. Body: optional, only if the change needs explanation (max 3 lines)
 7. breaking: true only if the change breaks a public API
@@ -324,7 +327,7 @@ export class CommitManager {
         private readonly _fileCtxManager: FileContextManager,
     ) { }
 
-    async generateAndShowCommitUI(): Promise<void> {
+    async generateAndShowCommitUI(chatIntent: string | null = null): Promise<void> {
         const rawDiff = await this._fileCtxManager.getStagedDiffForCommit();
 
         if (!rawDiff || rawDiff.trim().length === 0) {
@@ -366,7 +369,7 @@ export class CommitManager {
                 cancellable: false,
             },
             async () => {
-                const prompt = buildCommitPrompt(parsedDiff, recentCommits, branchName, hintType, hintScope);
+                const prompt = buildCommitPrompt(parsedDiff, recentCommits, branchName, hintType, hintScope, chatIntent);
 
                 const raw = await this._rawGenerateWithCommitPrompt(prompt);
                 suggestion = parseCommitResponse(raw);

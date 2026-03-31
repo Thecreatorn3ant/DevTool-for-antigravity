@@ -1,4 +1,4 @@
-﻿import * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import { OllamaClient, ContextFile, ApiKeyStatus, estimateTokens, AttachedImage } from './ollamaClient';
@@ -6,6 +6,7 @@ import { FileContextManager } from './fileContextManager';
 import { LspDiagnosticsManager } from './lspDiagnosticsManager';
 import { AgentRunner, AgentSession } from './agentRunner';
 import { ChatSessionManager, PromptTemplate } from './chatSessionManager';
+import { CommitManager } from './commitManager';
 
 interface ChatMessage {
     role: 'user' | 'ai';
@@ -231,14 +232,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _agentSession: AgentSession | null = null;
     private _lspWatchActive: boolean = false;
     private _sessionManager: ChatSessionManager;
+    private readonly _commitManager: CommitManager;
 
     constructor(
         private readonly _context: vscode.ExtensionContext,
         private readonly _ollamaClient: OllamaClient,
         private readonly _fileCtxManager: FileContextManager,
         sessionManager: ChatSessionManager,
+        commitManager: CommitManager,
     ) {
         this._sessionManager = sessionManager;
+        this._commitManager = commitManager;
         this._history = this._context.workspaceState.get<ChatMessage[]>('chatHistory', []);
         this._terminalPermission = this._context.workspaceState.get<'ask-all' | 'ask-important' | 'allow-all'>('terminalPermission', 'ask-important');
         this._lspManager = new LspDiagnosticsManager(this._context);
@@ -406,8 +410,51 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'showModelInfo':
                     vscode.commands.executeCommand('local-ai.showModelInfo');
                     break;
+                case 'getSettings': {
+                    const settings = {
+                        contextMult: this._context.workspaceState.get<number>('contextMultiplier', 1),
+                        maxTokens: this._context.workspaceState.get<number>('maxTokensLimit', 32000)
+                    };
+                    webviewView.webview.postMessage({ type: 'settingsData', settings });
+                    break;
+                }
+                case 'saveSettings':
+                    if (data.settings) {
+                        await this._context.workspaceState.update('contextMultiplier', data.settings.contextMult);
+                        await this._context.workspaceState.update('maxTokensLimit', data.settings.maxTokens);
+                        this._showNotification('Paramètres mis à jour.', 'success');
+                    }
+                    break;
+                case 'getHistoryList': {
+                    const sessions = await this._sessionManager.getAllSessions();
+                    const sessionData = sessions.map((s: any) => ({
+                        id: s.id,
+                        timestamp: s.updatedAt,
+                        model: s.model,
+                        preview: s.messages.find((m: any) => m.role === 'user')?.content.substring(0, 60) || 'Nouvelle discussion'
+                    }));
+                    webviewView.webview.postMessage({ type: 'historyList', sessions: sessionData });
+                    break;
+                }
+                case 'loadSession':
+                    if (data.id) {
+                        const session = await this._sessionManager.loadSession(data.id);
+                        if (session) {
+                            this._history = session.messages.map((m: any) => ({ 
+                                role: (m.role === 'assistant' ? 'ai' : 'user') as 'user'|'ai', 
+                                value: m.content 
+                            }));
+                            webviewView.webview.postMessage({ type: 'restoreHistory', history: this._history });
+                            this._showNotification(`Session chargée.`, 'success');
+                        }
+                    }
+                    break;
             }
         });
+    }
+
+    private _showNotification(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
+        this._view?.webview.postMessage({ type: 'notification', message, notificationType: type });
     }
 
     public sendMessageFromEditor(message: string) {
@@ -512,7 +559,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         const isCloud = this._ollamaClient.isCloud(resolvedUrl || undefined);
-        const budget = await this._ollamaClient.getTokenBudgetAsync(resolvedModel, resolvedUrl || undefined);
+        
+        const multiplier = this._context.workspaceState.get<number>('contextMultiplier', 1);
+        const maxTokens = this._context.workspaceState.get<number>('maxTokensLimit', 32000);
+
+        const budget = await this._ollamaClient.getTokenBudgetAsync(resolvedModel, resolvedUrl || undefined, multiplier, maxTokens);
 
         const allContextFiles: ContextFile[] = [...this._contextFiles];
         if (webviewContextFiles) {
@@ -1137,10 +1188,6 @@ Tu peux effectuer jusqu'à 5 actions autonomes par message. Reste focalisé sur 
         });
     }
 
-    private _showNotification(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
-        this._view?.webview.postMessage({ type: 'notification', message, notificationType: type });
-    }
-
     private _updateHistory() {
         this._context.workspaceState.update('chatHistory', this._history);
     }
@@ -1375,14 +1422,13 @@ Tu peux effectuer jusqu'à 5 actions autonomes par message. Reste focalisé sur 
     }
 
     private async _handleGenerateCommitMessage() {
-        const diff = await this._fileCtxManager.getStagedDiffForCommit();
-        if (!diff) {
-            vscode.window.showWarningMessage('Aucun fichier stagé. Faites d\'abord un `git add`.');
-            return;
-        }
-        this.sendMessageFromEditor(
-            `Génère un message de commit conventionnel (feat/fix/refactor/chore/docs/test) pour ce diff stagé. Réponds UNIQUEMENT avec le message de commit, sans explications :\n\`\`\`diff\n${diff.substring(0, 6000)}\n\`\`\``
-        );
+        const lastUserMsgs = this._history
+            .filter(m => m.role === 'user')
+            .slice(-2)
+            .map(m => m.value)
+            .join('\n');
+        
+        await this._commitManager.generateAndShowCommitUI(lastUserMsgs || null);
     }
 
     private async _handleReviewDiff() {
@@ -1531,7 +1577,9 @@ Tu peux effectuer jusqu'à 5 actions autonomes par message. Reste focalisé sur 
     <div class="header">
         <span class="header-brand">ANTIGRAVITY</span>
         <div class="header-controls">
-            <button class="btn-cloud" id="btnHome" title="Accueil" style="padding:4px 8px; font-weight: 700;">🏠 Accueil</button>
+            <button class="btn-cloud" id="btnHome" title="Accueil" style="padding:4px 8px; font-weight: 700;">🏠</button>
+            <button class="btn-cloud" id="btnHistory" title="Historique des discussions">📜 Historique</button>
+            <button class="btn-cloud" id="btnSettings" title="Paramètres">⚙️</button>
             <button class="btn-cloud" id="btnCloud">☁️ Cloud</button>
             <button class="btn-cloud" id="btnOnboarding" title="Revoir le guide de démarrage" style="padding:4px 8px;">🛸</button>
             <div id="modelComboWrap">

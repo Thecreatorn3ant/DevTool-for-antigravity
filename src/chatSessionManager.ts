@@ -215,6 +215,21 @@ export class ChatSessionManager {
         return this._currentSession;
     }
 
+    async getAllSessions(): Promise<ChatSession[]> {
+        return this._getAllSessions();
+    }
+
+    async loadSession(id: string): Promise<ChatSession | undefined> {
+        const sessions = await this._getAllSessions();
+        const session = sessions.find(s => s.id === id);
+        if (session) {
+            this._currentSession = session;
+            await this._context.workspaceState.update('lastSessionId', id);
+            return session;
+        }
+        return undefined;
+    }
+
     private _generateSessionId(): string {
         return `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     }

@@ -423,28 +423,30 @@ export class OllamaClient {
         if (changed) { await this._saveApiKeys(updated); this.router.reportRateLimit(url, cooldownMs); }
     }
 
-    getTokenBudget(model: string, targetUrl?: string): TokenBudget {
+    getTokenBudget(model: string, targetUrl?: string, multiplier: number = 1, fixedMax?: number): TokenBudget {
+        if (fixedMax) return { used: 0, max: fixedMax * 4, isCloud: this.isCloud(targetUrl) };
         if (this.isCloud(targetUrl) && this._detectProvider(targetUrl || '') !== 'lmstudio') {
             const provider = this._detectProvider(targetUrl || '');
             const limit = getCloudModelLimit(model, provider);
-            return { used: 0, max: limit * 4, isCloud: true };
+            return { used: 0, max: Math.floor(limit * multiplier * 4), isCloud: true };
         }
-        return { used: 0, max: 8192 * 4, isCloud: false };
+        return { used: 0, max: Math.floor(8192 * multiplier * 4), isCloud: false };
     }
 
-    async getTokenBudgetAsync(model: string, targetUrl?: string): Promise<TokenBudget> {
+    async getTokenBudgetAsync(model: string, targetUrl?: string, multiplier: number = 1, fixedMax?: number): Promise<TokenBudget> {
+        if (fixedMax) return { used: 0, max: fixedMax * 4, isCloud: this.isCloud(targetUrl) };
         if (this.isCloud(targetUrl) && this._detectProvider(targetUrl || '') !== 'lmstudio') {
             const provider = this._detectProvider(targetUrl || '');
             const limit = getCloudModelLimit(model, provider);
-            return { used: 0, max: limit * 4, isCloud: true };
+            return { used: 0, max: Math.floor(limit * multiplier * 4), isCloud: true };
         }
         const url = targetUrl || this._getBaseUrl();
         if (this._modelConfigManager) {
             const config = await this._modelConfigManager.getConfig(model, url);
-            return { used: 0, max: config.contextLimit * 4, isCloud: false };
+            return { used: 0, max: Math.floor(config.contextLimit * multiplier * 4), isCloud: false };
         }
         const tokens = await getLocalContextSize(model, url);
-        return { used: 0, max: tokens * 4, isCloud: false };
+        return { used: 0, max: Math.floor(tokens * multiplier * 4), isCloud: false };
     }
 
     buildContext(files: ContextFile[], history: string, model: string, targetUrl?: string): { context: string; budget: TokenBudget } {

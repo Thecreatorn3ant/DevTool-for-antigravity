@@ -21,14 +21,15 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     const fileCtxManager = new FileContextManager(context);
+    const commitManager = new CommitManager(ollamaClient, fileCtxManager);
     const chatProvider = new ChatViewProvider(
         context,
         ollamaClient,
         fileCtxManager,
-        sessionManager
+        sessionManager,
+        commitManager
     );
     const inlineCompletionProvider = new InlineCompletionProvider(ollamaClient);
-    const commitManager = new CommitManager(ollamaClient, fileCtxManager);
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
