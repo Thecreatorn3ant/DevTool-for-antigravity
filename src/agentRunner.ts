@@ -8,6 +8,7 @@ import { LspDiagnosticsManager } from './lspDiagnosticsManager';
 export type AgentStepType =
     | 'read_file'
     | 'write_file'
+    | 'search_files'
     | 'run_command'
     | 'fix_diagnostics'
     | 'think'
@@ -59,6 +60,7 @@ const AGENT_SYSTEM_PROMPT = `Tu es un agent autonome intégré dans VS Code. Tu 
 Types disponibles :
 - read_file   → input = chemin relatif du fichier à lire
 - write_file  → input = chemin relatif, content = contenu complet
+- search_files → input = terme de recherche (glob ou mot-clé)
 - run_command → input = commande shell à exécuter (ex: "npm test", "tsc --noEmit")
 - fix_diagnostics → input = "active" | "workspace" (lit les erreurs LSP actuelles)
 - think       → input = ta réflexion interne (non exécuté, juste loggé)
@@ -331,6 +333,17 @@ export class AgentRunner {
                         success: true,
                         output: `${filePath} écrit (${content.length} chars)`,
                         feedback: `Fichier ${filePath} sauvegardé. Vérifie les diagnostics si c'est du code.`,
+                    };
+                }
+
+                case 'search_files': {
+                    const query = action.input?.trim();
+                    if (!query) return { success: false, output: 'Terme de recherche manquant.' };
+                    const results = await this._fileCtxManager.searchFiles(query);
+                    return {
+                        success: true,
+                        output: `${results.length} fichiers trouvés`,
+                        feedback: `Résultats pour "${query}" :\n${results.join('\n') || 'Aucun résultat'}`,
                     };
                 }
 

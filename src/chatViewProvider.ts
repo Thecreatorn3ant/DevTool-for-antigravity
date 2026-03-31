@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import { OllamaClient, ContextFile, ApiKeyStatus, estimateTokens, AttachedImage } from './ollamaClient';
@@ -177,6 +177,27 @@ function parseAiResponse(response: string): {
     }
 
     return { needFiles, willModify, plan, createFiles, deleteFiles, projectSummary, commands };
+}
+
+function parseAgentTags(response: string): {
+    readFiles: string[];
+    searches: string[];
+} {
+    const readFiles: string[] = [];
+    const searches: string[] = [];
+
+    const readFileRegex = /\[READ_FILE:\s*([^\]]+)\]/g;
+    let m;
+    while ((m = readFileRegex.exec(response)) !== null) {
+        readFiles.push(m[1].trim());
+    }
+
+    const searchRegex = /\[SEARCH:\s*([^\]]+)\]/g;
+    while ((m = searchRegex.exec(response)) !== null) {
+        searches.push(m[1].trim());
+    }
+
+    return { readFiles, searches };
 }
 
 function extractMultiFilePatches(response: string): Map<string, string> {
@@ -535,6 +556,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const workspaceTree = await this._fileCtxManager.getWorkspaceTree();
         const treeStr = workspaceTree.slice(0, 100).join('\n');
 
+        const agentInstructions = `
+[DISPOSITIFS AGENTIQUES ACTIVÉS]
+Tu es un expert en exploration de base de code. Si tu as besoin de plus d'informations pour répondre :
+- Analyse la [STRUCTURE] ci-dessous.
+- Utilise [READ_FILE: chemin/relatif] pour lire un fichier et analyser ses imports.
+- Utilise [SEARCH: terme] pour trouver des fichiers par nom.
+Tu peux effectuer jusqu'à 5 actions autonomes par message. Reste focalisé sur l'objectif de l'utilisateur.
+
+`;
+
         const thinkPrefix = (thinkMode || this._thinkMode)
             ? 'MODE RÉFLEXION ACTIVÉ : Commence par un bloc [PLAN] listant TOUTES les modifications que tu prévois de faire (fichiers, fonctions, raisons), puis [/PLAN]. Ensuite seulement, fournis le code.\n\n'
             : '';
@@ -551,7 +582,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             context
         ].filter(Boolean).join('\n');
 
-        const finalPrompt = thinkPrefix + userMsg;
+        const finalPrompt = agentInstructions + thinkPrefix + userMsg;
 
         this._history.push({ role: 'user', value: userMsg });
         this._updateHistory();
@@ -606,6 +637,64 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
 
             await this._processAiResponse(fullRes);
+
+            let currentIteration = 0;
+            const MAX_ITERATIONS = 5;
+            let lastResponse = fullRes;
+
+            while (currentIteration < MAX_ITERATIONS) {
+                const agentTags = parseAgentTags(lastResponse);
+                if (agentTags.readFiles.length === 0 && agentTags.searches.length === 0) break;
+
+                currentIteration++;
+                this._view.webview.postMessage({ type: 'agentLoopStart', iteration: currentIteration });
+
+                let explorationContext = "";
+
+                for (const filePath of agentTags.readFiles) {
+                    this._view.webview.postMessage({ type: 'agentStep', status: 'running', stepType: 'read_file', description: `Lecture de ${filePath}` });
+                    const file = await this._fileCtxManager.handleAiFileRequest(filePath, 'allow-all'); // Using allow-all for fluid experience as discussed
+                    if (file) {
+                        this.addFilesToContext([file]);
+                        explorationContext += `\n[CONTENU DE ${file.name}]\n${file.content}\n`;
+                        this._view.webview.postMessage({ type: 'agentStep', status: 'done', stepType: 'read_file', description: `Lu ${file.name}`, output: `Taille: ${file.content.length} chars` });
+                    } else {
+                        explorationContext += `\n[ERREUR] Impossible de lire ${filePath}\n`;
+                        this._view.webview.postMessage({ type: 'agentStep', status: 'failed', stepType: 'read_file', description: `Erreur lecture ${filePath}` });
+                    }
+                }
+
+                for (const query of agentTags.searches) {
+                    this._view.webview.postMessage({ type: 'agentStep', status: 'running', stepType: 'fix_diagnostics', description: `Recherche de "${query}"` });
+                    const results = await this._fileCtxManager.searchFiles(query);
+                    explorationContext += `\n[RÉSULTATS DE RECHERCHE POUR "${query}"]\n${results.join('\n') || 'Aucun résultat'}\n`;
+                    this._view.webview.postMessage({ type: 'agentStep', status: 'done', stepType: 'fix_diagnostics', description: `Recherche terminée`, output: `${results.length} fichiers trouvés` });
+                }
+
+                this._view.webview.postMessage({ type: 'startResponse', isContinuing: true });
+                let nextRes = "";
+
+                await this._ollamaClient.generateStreamingResponse(
+                    "Continue ton analyse avec ces nouvelles informations.",
+                    fullContext + "\n\n[NOUVELLES INFORMATIONS D'EXPLORATION]\n" + explorationContext,
+                    (chunk) => {
+                        nextRes += chunk;
+                        this._view?.webview.postMessage({ type: 'partialResponse', value: chunk });
+                    },
+                    resolvedModel,
+                    resolvedUrl || undefined,
+                    undefined,
+                    'chat',
+                    '',
+                    this._currentAbortController?.signal
+                );
+
+                this._history.push({ role: 'ai', value: nextRes });
+                this._updateHistory();
+                this._view.webview.postMessage({ type: 'endResponse', value: nextRes });
+                await this._processAiResponse(nextRes);
+                lastResponse = nextRes;
+            }
 
         } catch (e: any) {
             if (e.name === 'AbortError') {

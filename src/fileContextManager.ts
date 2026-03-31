@@ -31,7 +31,7 @@ export class FileContextManager {
         const dir = path.dirname(doc.fileName);
         const related: ContextFile[] = [];
 
-        const importRegex = /(?:import|require)\s*(?:\{[^}]*\}|[\w*]+|['"])?\s*(?:from\s*)?['"](\.[^'"]+)['"]/g;
+        const importRegex = /(?:import|require|from)\s*['"](\.[^'"]+)['"]/g;
         const found = new Set<string>();
         let match;
 
@@ -39,7 +39,7 @@ export class FileContextManager {
             const importPath = match[1];
             if (!importPath.startsWith('.')) continue;
 
-            const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.js'];
+            const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '.css', '.scss', '/index.ts', '/index.js'];
             for (const ext of extensions) {
                 const full = path.resolve(dir, importPath + ext);
                 const relPath = vscode.workspace.asRelativePath(full);
@@ -48,9 +48,10 @@ export class FileContextManager {
 
                 try {
                     const uri = vscode.Uri.file(full);
-                    const contentBytes = await vscode.workspace.fs.readFile(uri);
-                    const content = contentBytes.toString();
-                    if (content) {
+                    const stats = await vscode.workspace.fs.stat(uri);
+                    if (stats.type === vscode.FileType.File) {
+                        const contentBytes = await vscode.workspace.fs.readFile(uri);
+                        const content = contentBytes.toString();
                         found.add(relPath);
                         const truncated = content.length > maxChars
                             ? content.substring(0, maxChars) + '\n[... tronqué ...]'
@@ -58,9 +59,9 @@ export class FileContextManager {
                         related.push({ name: relPath, content: truncated, isActive: false });
                         break;
                     }
-                } catch { /* file not found, try next extension */ }
+                } catch { }
             }
-            if (found.size >= 5) break;
+            if (found.size >= 10) break;
         }
 
         return related;
@@ -248,8 +249,17 @@ export class FileContextManager {
     async getWorkspaceTree(): Promise<string[]> {
         const files = await vscode.workspace.findFiles(
             '**/*',
-            '{**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/.next/**}',
-            300
+            '{**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/.next/**,**/out/**,**/package-lock.json,**/pnpm-lock.yaml}',
+            1000
+        );
+        return files.map(u => vscode.workspace.asRelativePath(u)).sort();
+    }
+
+    async searchFiles(query: string): Promise<string[]> {
+        const files = await vscode.workspace.findFiles(
+            `**/*${query}*`,
+            '{**/node_modules/**,**/.git/**,**/dist/**}',
+            50
         );
         return files.map(u => vscode.workspace.asRelativePath(u)).sort();
     }

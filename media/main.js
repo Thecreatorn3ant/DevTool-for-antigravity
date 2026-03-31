@@ -411,20 +411,39 @@ window.addEventListener('message', function (e) {
     }
     if (m.type === 'startResponse') {
         showStopButton();
-        currentAiMsg = document.createElement('div'); currentAiMsg.className = 'msg ai';
-        currentAiMsg.innerHTML = '<div class="thinking"><span></span><span></span><span></span></div>';
-        chat.appendChild(currentAiMsg); chat.scrollTop = chat.scrollHeight; currentAiText = '';
+        if (!m.isContinuing) {
+            currentAiMsg = document.createElement('div');
+            currentAiMsg.className = 'msg ai';
+            currentAiMsg.innerHTML = '<div class="thinking"><span></span><span></span><span></span> <span style="font-size:10px;margin-left:8px;color:#00d2ff;opacity:0.8;">Réflexion...</span></div>';
+            chat.appendChild(currentAiMsg);
+            chat.scrollTop = chat.scrollHeight;
+        }
+        currentAiText = '';
     }
     if (m.type === 'partialResponse') {
         if (!currentAiMsg) { currentAiMsg = addMsg('', 'ai', true); }
-        currentAiText += m.value; currentAiMsg.innerHTML = renderMarkdown(currentAiText); smartScroll();
+        currentAiText += m.value;
+        currentAiMsg.innerHTML = renderMarkdown(currentAiText);
+        smartScroll();
     }
     if (m.type === 'endResponse') {
         hideStopButton();
         var finalText = m.value || currentAiText;
-        if (currentAiMsg) { currentAiMsg.innerHTML = renderMarkdown(finalText); }
-        else { addMsg(renderMarkdown(finalText), 'ai', true); }
-        currentAiMsg = null; currentAiText = '';
+        if (currentAiMsg) {
+            currentAiMsg.innerHTML = renderMarkdown(finalText);
+        } else {
+            addMsg(renderMarkdown(finalText), 'ai', true);
+        }
+        currentAiMsg = null;
+        currentAiText = '';
+    }
+    if (m.type === 'agentLoopStart') {
+        var loopDivider = document.createElement('div');
+        loopDivider.className = 'agent-loop-info';
+        loopDivider.style.cssText = 'display:flex;align-items:center;gap:10px;margin:10px 0;opacity:0.6;font-size:10px;color:#00d2ff;text-transform:uppercase;letter-spacing:1px;';
+        loopDivider.innerHTML = '<div style="flex:1;height:1px;background:linear-gradient(90deg, transparent, rgba(0,210,255,0.3));"></div><span>Étape d\'exploration ' + m.iteration + '</span><div style="flex:1;height:1px;background:linear-gradient(90deg, rgba(0,210,255,0.3), transparent);"></div>';
+        chat.appendChild(loopDivider);
+        smartScroll();
     }
     if (m.type === 'fileContent') { addContextFile(m.name, m.content); }
     if (m.type === 'injectMessage') {
@@ -488,13 +507,40 @@ window.addEventListener('message', function (e) {
     if (m.type === 'agentStep') {
         var stepIcons = { think: '💭', read_file: '📖', write_file: '✏️', run_command: '💻', fix_diagnostics: '🔍', done: '✅', error: '❌' };
         var icon = stepIcons[m.stepType] || '▸';
-        var existing = document.getElementById('agent-step-' + m.stepId);
-        if (!existing) { existing = document.createElement('div'); existing.id = 'agent-step-' + m.stepId; existing.className = 'agent-step'; document.getElementById('agentSteps').appendChild(existing); }
+
+        var lastActivityGroup = chat.querySelector('.agent-activity-group:last-child');
+        if (!lastActivityGroup || lastActivityGroup.nextElementSibling) {
+            lastActivityGroup = document.createElement('div');
+            lastActivityGroup.className = 'agent-activity-group';
+            lastActivityGroup.style.cssText = 'background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:12px;padding:8px;margin:8px 0;display:flex;flex-direction:column;gap:4px;';
+            chat.appendChild(lastActivityGroup);
+        }
+
+        var stepId = 'step-' + (m.stepId || Math.random().toString(36).substring(7));
+        var existing = document.getElementById(stepId);
+
+        if (!existing) {
+            existing = document.createElement('div');
+            existing.id = stepId;
+            existing.className = 'agent-step';
+            lastActivityGroup.appendChild(existing);
+        }
+
         var dur = m.durationMs ? '<span class="agent-step-dur">(' + Math.round(m.durationMs / 100) / 10 + 's)</span>' : '';
-        var out = m.output ? '<div class="agent-step-out">' + escapeHtml(m.output.substring(0, 120)) + '</div>' : '';
+        var out = m.output ? '<div class="agent-step-out" style="font-size:10px;opacity:0.6;margin-top:2px;padding-left:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(m.output.substring(0, 120)) + '</div>' : '';
+
         existing.className = 'agent-step step-' + m.status;
-        existing.innerHTML = '<div class="agent-step-icon">' + icon + '</div><div class="agent-step-body"><div class="agent-step-desc">' + escapeHtml(m.description) + dur + '</div>' + out + '</div>';
-        document.getElementById('agentSteps').scrollTop = 9999;
+        existing.style.cssText = 'display:flex;flex-direction:column;font-size:11px;padding:4px 8px;border-radius:6px;transition:all 0.3s;';
+
+        var statusColor = m.status === 'done' ? '#6debb0' : m.status === 'failed' ? '#ff8888' : '#00d2ff';
+        var statusOpacity = m.status === 'running' ? '1' : '0.7';
+
+        existing.innerHTML = '<div style="display:flex;align-items:center;gap:8px;color:' + statusColor + ';opacity:' + statusOpacity + ';">' +
+            '<span style="font-size:14px;">' + icon + '</span>' +
+            '<span style="font-weight:500;">' + escapeHtml(m.description) + '</span>' +
+            dur + '</div>' + out;
+
+        smartScroll();
     }
     if (m.type === 'agentDone' || m.type === 'agentStopped' || m.type === 'agentFailed') {
         _agentRunning = false;
