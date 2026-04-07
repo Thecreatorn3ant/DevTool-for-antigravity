@@ -127,7 +127,7 @@ export class InlineCompletionProvider implements vscode.InlineCompletionItemProv
 
             if (token.isCancellationRequested || signal.aborted) return null;
 
-            const { localStream } = await import('./localProvider');
+            const { localStream } = await import('./localProvider.js');
             completionText = await localStream({
                 model: inlineModel,
                 prompt,

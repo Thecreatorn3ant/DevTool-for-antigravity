@@ -396,9 +396,9 @@ export class CommitManager {
     private async _rawGenerateWithCommitPrompt(prompt: string): Promise<string> {
         const slot = await this._ollamaClient.router.selectProvider('commit');
 
-        const { localStream } = await import('./localProvider');
-        const { cloudStream, isCloudUrl } = await import('./cloudProvider');
-        const { isLocalUrl } = await import('./localProvider');
+        const { localStream } = await import('./localProvider.js');
+        const { cloudStream, isCloudUrl } = await import('./cloudProvider.js');
+        const { isLocalUrl } = await import('./localProvider.js');
 
         const systemPrompt = [
             'You are a Git commit message generator.',
