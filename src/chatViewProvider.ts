@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import { OllamaClient, ContextFile, ApiKeyStatus, estimateTokens, AttachedImage } from './ollamaClient';
@@ -7,6 +7,7 @@ import { LspDiagnosticsManager } from './lspDiagnosticsManager';
 import { AgentRunner, AgentSession } from './agentRunner';
 import { ChatSessionManager, PromptTemplate } from './chatSessionManager';
 import { CommitManager } from './commitManager';
+import { I18nManager } from './i18n';
 
 interface ChatMessage {
     role: 'user' | 'ai';
@@ -240,6 +241,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         private readonly _fileCtxManager: FileContextManager,
         sessionManager: ChatSessionManager,
         commitManager: CommitManager,
+        private readonly _i18n: I18nManager
     ) {
         this._sessionManager = sessionManager;
         this._commitManager = commitManager;
@@ -330,7 +332,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     await this._handleAddRelatedFiles();
                     break;
                 case 'finishOnboarding':
+                    if (data.language) {
+                        await this._i18n.setLanguage(data.language);
+                    }
                     await this._context.globalState.update('antigravity.onboardingComplete', true);
+                    // Reload webview to apply language
+                    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview, false);
                     break;
                 case 'setupGeminiKey':
                     if (data.key) {
@@ -440,13 +447,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     if (data.id) {
                         const session = await this._sessionManager.loadSession(data.id);
                         if (session) {
-                            this._history = session.messages.map((m: any) => ({ 
-                                role: (m.role === 'assistant' ? 'ai' : 'user') as 'user'|'ai', 
-                                value: m.content 
+                            this._history = session.messages.map((m: any) => ({
+                                role: (m.role === 'assistant' ? 'ai' : 'user') as 'user' | 'ai',
+                                value: m.content
                             }));
                             webviewView.webview.postMessage({ type: 'restoreHistory', history: this._history });
-                            this._showNotification(`Session chargée.`, 'success');
+                            this._showNotification(this._i18n.t('session_loaded'), 'success');
                         }
+                    }
+                    break;
+                case 'deleteSession':
+                    if (data.id) {
+                        await this._sessionManager.deleteSession(data.id);
+                        this._showNotification('Session supprimée.', 'success');
+                        const sessions = await this._sessionManager.getAllSessions();
+                        const sessionData = sessions.map((s: any) => ({
+                            id: s.id,
+                            timestamp: s.updatedAt,
+                            model: s.model,
+                            preview: s.messages.find((m: any) => m.role === 'user')?.content.substring(0, 60) || 'Nouvelle discussion'
+                        }));
+                        webviewView.webview.postMessage({ type: 'historyList', sessions: sessionData });
+                    }
+                    break;
+                case 'setLanguage':
+                    if (data.value) {
+                        await this._i18n.setLanguage(data.value);
+                        // Refresh with new texts
+                        webviewView.webview.postMessage({
+                            type: 'languageChanged',
+                            lang: data.value,
+                            translations: this._i18n.getAll()
+                        });
                     }
                     break;
             }
@@ -559,7 +591,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         const isCloud = this._ollamaClient.isCloud(resolvedUrl || undefined);
-        
+
         const multiplier = this._context.workspaceState.get<number>('contextMultiplier', 1);
         const maxTokens = this._context.workspaceState.get<number>('maxTokensLimit', 32000);
 
@@ -1427,7 +1459,7 @@ Tu peux effectuer jusqu'à 5 actions autonomes par message. Reste focalisé sur 
             .slice(-2)
             .map(m => m.value)
             .join('\n');
-        
+
         await this._commitManager.generateAndShowCommitUI(lastUserMsgs || null);
     }
 
@@ -1551,292 +1583,222 @@ Tu peux effectuer jusqu'à 5 actions autonomes par message. Reste focalisé sur 
     }
 
     private _getHtmlForWebview(webview: vscode.Webview, showOnboarding: boolean = false): string {
-        const bgUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(this._context.extensionUri, 'media', 'background.png')
-        );
-        const scriptUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(this._context.extensionUri, 'media', 'main.js')
-        );
-        const styleUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(this._context.extensionUri, 'media', 'main.css')
-        );
+        const bgUri = webview.asWebviewUri(vscode.Uri.joinPath(this._context.extensionUri, 'media', 'background.png'));
+        const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._context.extensionUri, 'media', 'main.js'));
+        const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._context.extensionUri, 'media', 'main.css'));
         const cspSource = webview.cspSource;
+        const t = this._i18n.getAll();
+        const lang = this._i18n.language;
 
         return `<!DOCTYPE html>
-<html lang="fr">
+<html lang="${lang}">
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src *; img-src ${cspSource} data:; style-src 'unsafe-inline' https://fonts.googleapis.com ${cspSource}; font-src https://fonts.gstatic.com; script-src 'unsafe-inline' ${cspSource};">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="${styleUri}">
     <style>
         .space-bg { background-image: url('${bgUri}'); }
     </style>
 </head>
-<body>
+<body class="lang-${lang}">
     <div class="space-bg"></div>
-    <div class="header">
-        <span class="header-brand">ANTIGRAVITY</span>
-        <div class="header-controls">
-            <button class="btn-cloud" id="btnHome" title="Accueil" style="padding:4px 8px; font-weight: 700;">🏠</button>
-            <button class="btn-cloud" id="btnHistory" title="Historique des discussions">📜 Historique</button>
-            <button class="btn-cloud" id="btnSettings" title="Paramètres">⚙️</button>
-            <button class="btn-cloud" id="btnCloud">☁️ Cloud</button>
-            <button class="btn-cloud" id="btnOnboarding" title="Revoir le guide de démarrage" style="padding:4px 8px;">🛸</button>
-            <div id="modelComboWrap">
-                <div id="modelComboBox">
-                    <input id="modelSearch" type="text" placeholder="Modèle…" autocomplete="off" spellcheck="false">
-                    <span id="modelComboArrow">▾</span>
-                </div>
-                <div id="modelDropdown"></div>
-                <select id="modelSelect" style="display:none"></select>
+    
+    <div class="app-container">
+        <!-- Main Header -->
+        <header class="main-header">
+            <div class="header-left">
+                <span class="brand">ANTIGRAVITY</span>
+                <span class="version">v0.4.0</span>
             </div>
-        </div>
-    </div>
-    <div id="localWarn"></div>
-    <div id="tokenBar"></div>
-    <div id="filesBar"></div>
-    <div id="chatWrap">
-        <div id="chat"></div>
-        <button id="scrollBtn" title="Retour en bas">↓</button>
-    </div>
-    <div id="terminalLog"></div>
-    <div id="agentPanel" style="display:none">
-        <div id="agentHeader">
-            <span id="agentGoalLabel">🤖 Agent</span>
-            <button id="agentStopBtn" onclick="stopAgent()">⏹ Stop</button>
-        </div>
-        <div id="agentSteps"></div>
-    </div>
-    <div id="lspPanel" style="display:none">
-        <div id="lspHeader">
-            <span id="lspSummary">🔴 LSP</span>
-            <button onclick="document.getElementById('lspPanel').style.display='none'">✕</button>
-        </div>
-        <div id="lspContent"></div>
-        <div id="lspActions">
-            <button onclick="sendLspToAi()">🤖 Envoyer à l'IA</button>
-            <button onclick="document.getElementById('lspPanel').style.display='none'">Fermer</button>
-        </div>
-    </div>
-    <div class="input-area">
-        <div class="input-actions">
-            <button class="btn-action" id="btnAddFile" title="Ajouter un fichier au contexte">📎 Fichier</button>
-            <button class="btn-action" id="btnRelatedFiles" title="Ajouter les fichiers importés du fichier actif">🔗 Liés</button>
-            <button class="btn-action" id="btnThink" title="Mode Réflexion">🧠 Réflexion</button>
-            <button class="btn-action" id="btnError" title="Analyser une erreur">🐛 Erreur</button>
-            <button class="btn-action" id="btnGitReview" title="Revue du diff Git">📝 Diff</button>
-            <button class="btn-action" id="btnCommit" title="Générer un message de commit">💾 Commit</button>
-            <button class="btn-action" id="btnTests" title="Générer les tests du fichier actif">🧪 Tests</button>
-            <button class="btn-action" id="btnClearHistory" title="Effacer l'historique">🗑 Vider</button>
-            <button class="btn-action" id="btnReset" title="Nouveau chat / Reset">🔄 Reset</button>
-            <button class="btn-action" id="btnLsp" title="Analyser les erreurs LSP">🔴 LSP</button>
-            <button class="btn-action" id="btnLspWatch" title="Surveiller les erreurs en temps réel">👁 Veille</button>
-            <button class="btn-action" id="btnAgent" title="Lancer l'agent autonome IA">🤖 Agent</button>
-            <select id="termPermSelect" title="Permissions terminal IA">
-                <option value="ask-all">💻 Demander toujours</option>
-                <option value="ask-important">⚠️ Demander si important</option>
-                <option value="allow-all">🚀 Autoriser tout</option>
-            </select>
-        </div>
-        <div class="input-row">
-            <textarea id="prompt" placeholder="Posez une question… (Entrée pour envoyer, Shift+Entrée pour saut de ligne)" rows="1"></textarea>
-            <button id="send">SEND</button>
-            <button id="stop" style="display:none;">⏹ STOP</button>
-        </div>
+            <div class="header-right">
+                <button id="btnNewChat" class="icon-btn" title="${t.new_chat}">➕</button>
+                <div class="lang-selector">
+                    <button id="btnLang" class="lang-btn">${lang.toUpperCase()}</button>
+                </div>
+                <div id="modelComboWrap">
+                    <div id="modelComboBox">
+                        <input id="modelSearch" type="text" placeholder="Select Model..." autocomplete="off" spellcheck="false">
+                        <span id="modelComboArrow">▾</span>
+                    </div>
+                    <div id="modelDropdown"></div>
+                    <select id="modelSelect" style="display:none"></select>
+                </div>
+            </div>
+        </header>
+
+        <!-- Provider Status Banner -->
+        <div id="localWarn"></div>
+
+        <!-- Main Content Area (Tabs) -->
+        <main class="tabs-content">
+            <!-- Chat Tab -->
+            <section id="tab-chat" class="tab-pane active">
+                <div id="tokenBar"></div>
+                <div id="filesBar"></div>
+                <div id="chatWrap">
+                    <div id="chat"></div>
+                    <button id="scrollBtn" title="Scroll to bottom">↓</button>
+                </div>
+                
+                <div id="terminalLog"></div>
+                
+                <div id="agentPanel" style="display:none">
+                    <div id="agentHeader">
+                        <span id="agentGoalLabel">🤖 Agent</span>
+                        <button id="agentStopBtn">⏹ Stop</button>
+                    </div>
+                    <div id="agentSteps"></div>
+                </div>
+
+                <div id="lspPanel" style="display:none">
+                    <div id="lspHeader">
+                        <span id="lspSummary">🔴 LSP</span>
+                        <button id="btnCloseLsp">✕</button>
+                    </div>
+                    <div id="lspContent"></div>
+                    <div id="lspActions">
+                        <button id="btnLspAi">🤖 Solve with AI</button>
+                    </div>
+                </div>
+
+                <div class="input-area">
+                    <div class="input-actions-scroll">
+                        <div class="input-actions">
+                            <button class="btn-action" id="btnAddFile" title="Add file">📎</button>
+                            <button class="btn-action" id="btnThink" title="Think Mode">🧠</button>
+                            <button class="btn-action" id="btnGitReview" title="Review Changes">📝</button>
+                            <button class="btn-action" id="btnAgent" title="AI Agent">🤖</button>
+                            <button class="btn-action" id="btnLsp" title="LSP Analysis">🔴</button>
+                            <select id="termPermSelect">
+                                <option value="ask-all">💻 Ask</option>
+                                <option value="ask-important">⚠️ Warn</option>
+                                <option value="allow-all">🚀 Auto</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <textarea id="prompt" placeholder="${t.chat_placeholder}" rows="1"></textarea>
+                        <button id="send">${t.btn_send}</button>
+                        <button id="stop" style="display:none;">${t.btn_stop}</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- History Tab -->
+            <section id="tab-history" class="tab-pane">
+                <div class="tab-header">
+                    <h2>${t.tab_history}</h2>
+                    <button id="btnRefreshHistory" class="text-btn">🔄</button>
+                </div>
+                <div id="historyList" class="scrollable-list">
+                    <div class="loading-spinner"></div>
+                </div>
+            </section>
+
+            <!-- Settings Tab -->
+            <section id="tab-settings" class="tab-pane">
+                <div class="tab-header">
+                    <h2>${t.tab_settings}</h2>
+                </div>
+                <div class="settings-list">
+                    <div class="setting-group">
+                        <h3>AI Providers</h3>
+                        <div class="setting-item">
+                            <label>Local AI (Ollama/LM Studio)</label>
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="toggleLocal" checked>
+                                <span class="slider"></span>
+                            </div>
+                        </div>
+                        <div class="setting-item">
+                            <label>Cloud AI (Gemini/OpenAI)</label>
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="toggleCloud" checked>
+                                <span class="slider"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <h3>Coding Assistant</h3>
+                        <div class="setting-item">
+                            <label>${t.local_only_prediction}</label>
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="toggleLocalPrediction" checked>
+                                <span class="slider"></span>
+                            </div>
+                        </div>
+                        <div class="setting-item">
+                            <label>Context Multiplier</label>
+                            <input type="range" id="settingContextMult" min="0.5" max="4" step="0.1" value="1">
+                            <span id="multValue">1.0x</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <h3>Language</h3>
+                        <div class="setting-item">
+                            <label>Application Language</label>
+                            <select id="selectLang">
+                                <option value="fr" ${lang === 'fr' ? 'selected' : ''}>Français</option>
+                                <option value="en" ${lang === 'en' ? 'selected' : ''}>English</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <button id="btnSaveSettings" class="primary-btn">${t.finish}</button>
+                </div>
+            </section>
+        </main>
+
+        <!-- Bottom Navigation -->
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-tab="chat">
+                <span class="nav-icon">💬</span>
+                <span class="nav-label">${t.tab_chat}</span>
+            </button>
+            <button class="nav-item" data-tab="history">
+                <span class="nav-icon">📜</span>
+                <span class="nav-label">${t.tab_history}</span>
+            </button>
+            <button class="nav-item" data-tab="settings">
+                <span class="nav-icon">⚙️</span>
+                <span class="nav-label">${t.tab_settings}</span>
+            </button>
+        </nav>
     </div>
 
     <!-- Onboarding Overlay -->
-    <div id="obOverlay">
+    <div id="obOverlay" style="${showOnboarding ? 'display:flex' : 'display:none'}">
         <div id="obBg"></div>
         <canvas id="obCanvas"></canvas>
-
         <div id="obCard">
-            <!-- Header -->
             <div class="ob-hdr">
-                <div class="ob-logo-row">
-                    <div class="ob-logo-hex">🛸</div>
-                    <div class="ob-logo-text">
-                        <span class="ob-brand-tag">Antigravity IDE</span>
-                        <span class="ob-step-label" id="obStepLabel">step 1 / 5</span>
-                    </div>
-                    <button id="obCloseBtn" onclick="obSkip();" title="Fermer et revenir au chat" style="margin-left:auto;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#666;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:sans-serif;">✕</button>
-                </div>
-                <h2 class="ob-title" id="obMainTitle">Mission Briefing</h2>
-                <p class="ob-sub" id="obMainSub">Configure your AI co-pilot in 60 seconds.</p>
+                <h2 class="ob-title">${t.onboarding_title}</h2>
+                <p class="ob-sub">${t.onboarding_subtitle}</p>
             </div>
-
-            <div class="ob-progress">
-                <div class="ob-seg active" id="obSeg1"></div>
-                <div class="ob-seg" id="obSeg2"></div>
-                <div class="ob-seg" id="obSeg3"></div>
-                <div class="ob-seg" id="obSeg4"></div>
-                <div class="ob-seg" id="obSeg5"></div>
-            </div>
-
             <div class="ob-body">
-
-                <div class="ob-step active" id="obStep1">
-                    <p class="ob-desc">
-                        <b>Antigravity</b> is your AI pair-programmer, built directly into VS Code.<br>
-                        It runs <b>locally</b> (private, free) or connects to <b>cloud models</b> — your choice.
-                    </p>
-                    <div class="ob-features">
-                        <div class="ob-feat">
-                            <div class="ob-feat-icon">⚡</div>
-                            <div class="ob-feat-name">Inline completion</div>
-                            <div class="ob-feat-desc">Copilot-style suggestions as you type</div>
-                        </div>
-                        <div class="ob-feat">
-                            <div class="ob-feat-icon">🤖</div>
-                            <div class="ob-feat-name">Autonomous agent</div>
-                            <div class="ob-feat-desc">Multi-step tasks, reads & writes files</div>
-                        </div>
-                        <div class="ob-feat">
-                            <div class="ob-feat-icon">✨</div>
-                            <div class="ob-feat-name">Smart commits</div>
-                            <div class="ob-feat-desc">Conventional commits from your diff</div>
-                        </div>
-                        <div class="ob-feat">
-                            <div class="ob-feat-icon">🔴</div>
-                            <div class="ob-feat-name">LSP analysis</div>
-                            <div class="ob-feat-desc">Fix TypeScript errors with one click</div>
-                        </div>
+                <div class="ob-step active">
+                    <p>${t.select_language}:</p>
+                    <div class="lang-btns">
+                        <button onclick="setLang('fr')" class="ob-btn ${lang === 'fr' ? 'cyan' : ''}">FR</button>
+                        <button onclick="setLang('en')" class="ob-btn ${lang === 'en' ? 'cyan' : ''}">EN</button>
                     </div>
-                    <div class="ob-btns">
-                        <button class="ob-btn launch" onclick="obGo(2)">Begin setup →</button>
-                    </div>
+                    <button class="ob-btn launch" onclick="obFinish()">${t.finish} →</button>
                 </div>
-
-                <div class="ob-step" id="obStep2">
-                    <div class="ob-eyebrow">Option A — Local & Private</div>
-                    <div class="ob-h2">🦙 Ollama</div>
-                    <p class="ob-desc">Run AI models on your own machine. <b>No API key, no internet, no cost.</b></p>
-                    <div class="ob-box">
-                        <div class="ob-box-row">
-                            <span class="ob-box-icon">1.</span>
-                            <span>Download from <a href="https://ollama.com/download" target="_blank">ollama.com/download ↗</a></span>
-                        </div>
-                        <div class="ob-box-row">
-                            <span class="ob-box-icon">2.</span>
-                            <span>In a terminal: <code>ollama run llama3</code></span>
-                        </div>
-                        <div class="ob-box-row">
-                            <span class="ob-box-icon">3.</span>
-                            <span>Auto-detected on <code>localhost:11434</code> ✓</span>
-                        </div>
-                        <div class="ob-box-row" style="margin-top:4px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.05);font-size:10px;color:#666;">
-                            <span class="ob-box-icon">💡</span>
-                            <span>If the requested model isn't installed, Antigravity auto-selects the <b>lightest available model</b></span>
-                        </div>
-                    </div>
-                    <div class="ob-status idle" id="obOllamaStatus">
-                        <div class="ob-status-dot"></div>
-                        <span id="obOllamaStatusText">Not tested</span>
-                    </div>
-                    <div class="ob-btns">
-                        <button class="ob-btn cyan" onclick="obTestOllama()">🔍 Test Ollama</button>
-                        <button class="ob-btn" onclick="obGo(3)">Skip →</button>
-                    </div>
-
-                    <div class="ob-eyebrow" style="margin-top:16px;">Option B — Local GUI</div>
-                    <div class="ob-h2" style="font-size:16px;margin-top:2px;">💻 LM Studio</div>
-                    <p class="ob-desc" style="font-size:11px;margin-top:2px;">Download <a href="https://lmstudio.ai" target="_blank">lmstudio.ai ↗</a>, load a model, then enable <b>Local Server</b> (port 1234).</p>
-                    <div class="ob-status idle" id="obLmStatus">
-                        <div class="ob-status-dot"></div>
-                        <span id="obLmStatusText">Not tested</span>
-                    </div>
-                    <div class="ob-btns" style="margin-top:6px;">
-                        <button class="ob-btn" style="background:rgba(116,170,156,0.15);border-color:rgba(116,170,156,0.4);color:#74aa9c;" onclick="obTestLmStudio()">🔍 Test LM Studio</button>
-                    </div>
-
-                    <div class="ob-skip" onclick="obGo(3)">I'll set this up later</div>
-                </div>
-
-                <div class="ob-step" id="obStep3">
-                    <div class="ob-eyebrow">Cloud Provider — Free Tier</div>
-                    <div class="ob-h2">✨ Google Gemini</div>
-                    <p class="ob-desc">The most generous free tier available — <b>no credit card required.</b></p>
-                    <div class="ob-box purple">
-                        <div class="ob-box-row"><span class="ob-box-icon">🧠</span><span><b>1M token</b> context window — fit entire codebases</span></div>
-                        <div class="ob-box-row"><span class="ob-box-icon">🚀</span><span>Fast streaming, vision support (screenshots → code)</span></div>
-                        <div class="ob-box-row"><span class="ob-box-icon">🆓</span><span>Free on standard plan — no billing setup</span></div>
-                    </div>
-                    <div id="obGeminiForm" style="display:flex;flex-direction:column;gap:8px;">
-                        <p class="ob-desc" style="font-size:11px;">
-                            Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com ↗</a>
-                            → <b>Create API key</b> → paste below:
-                        </p>
-                        <input type="password" id="obGeminiKey" class="ob-input"
-                            placeholder="AIzaSy…" autocomplete="off" />
-                        <div class="ob-status idle" id="obGeminiStatus">
-                            <div class="ob-status-dot"></div>
-                            <span id="obGeminiStatusText">Enter key above to validate</span>
-                        </div>
-                        <div class="ob-btns">
-                            <button class="ob-btn purple" onclick="obSaveGemini()">💾 Save & continue</button>
-                            <button class="ob-btn" onclick="obGo(4)">Skip</button>
-                        </div>
-                    </div>
-                    <div class="ob-skip" onclick="obGo(4)">I'll configure cloud providers later</div>
-                </div>
-
-                <div class="ob-step" id="obStep4">
-                    <div class="ob-eyebrow">Quick Reference</div>
-                    <div class="ob-h2">🗺️ The cockpit</div>
-                    <p class="ob-desc">Everything you need is in the toolbar below the chat.</p>
-                    <div class="ob-shortcuts">
-                        <div class="ob-shortcut">
-                            <span class="ob-shortcut-desc">📎 <b>File</b> — add file to AI context</span>
-                            <span class="ob-shortcut-key">click</span>
-                        </div>
-                        <div class="ob-shortcut">
-                            <span class="ob-shortcut-desc">🧠 <b>Think</b> — plan before acting</span>
-                            <span class="ob-shortcut-key">click</span>
-                        </div>
-                        <div class="ob-shortcut">
-                            <span class="ob-shortcut-desc">✨ <b>Commit</b> — AI commit message from diff</span>
-                            <span class="ob-shortcut-key">click</span>
-                        </div>
-                        <div class="ob-shortcut">
-                            <span class="ob-shortcut-desc">🤖 <b>Agent</b> — autonomous multi-step tasks</span>
-                            <span class="ob-shortcut-key">click</span>
-                        </div>
-                        <div class="ob-shortcut">
-                            <span class="ob-shortcut-desc">🔴 <b>LSP</b> — fix type errors with AI</span>
-                            <span class="ob-shortcut-key">click</span>
-                        </div>
-                        <div class="ob-shortcut">
-                            <span class="ob-shortcut-desc">☁️ <b>Cloud</b> — manage API keys</span>
-                            <span class="ob-shortcut-key">header</span>
-                        </div>
-                    </div>
-                    <div class="ob-btns" style="margin-top:4px;">
-                        <button class="ob-btn cyan" onclick="obGo(5)">Got it →</button>
-                    </div>
-                </div>
-
-                <div class="ob-step" id="obStep5">
-                    <div class="ob-celebration">
-                        <span class="ob-big-icon" id="obRocket">🛸</span>
-                        <h3>You're cleared for launch.</h3>
-                        <p>Select a model in the top-right corner<br>and start building with your AI co-pilot.</p>
-                    </div>
-                    <div class="ob-box" style="font-size:11px; line-height:1.8;">
-                        <b>Pro tip:</b> Open any file, then ask the AI to explain it.<br>
-                        Use <b>📎 File</b> to give it full context of your project.
-                    </div>
-                    <button class="ob-btn launch" onclick="obFinish()">🚀 Launch Antigravity</button>
-                </div>
-
             </div>
         </div>
     </div>
 
-    <!-- State Injection and Main script -->
-    <script>
-        window._showOnboarding = ${showOnboarding};
-    </script>
     <script src="${scriptUri}"></script>
+    <script>
+        window.I18N = ${JSON.stringify(t)};
+        window.LANG = "${lang}";
+        function setLang(l) { 
+            vscode.postMessage({ type: 'setLanguage', value: l }); 
+        }
+    </script>
 </body>
 </html>`;
     }

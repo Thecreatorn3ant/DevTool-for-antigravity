@@ -137,21 +137,16 @@ export class FileContextManager {
             const msg = `⚠️ Accès à un ${label} hors workspace : "${filePath}". Autoriser ?`;
             const r = await vscode.window.showInformationMessage(msg, { modal: true }, '✅ Autoriser', '❌ Refuser');
             if (r !== '✅ Autoriser') return null;
-        } else if (!inWorkspace && filePermission === 'ask-workspace') {
-            const r = await vscode.window.showInformationMessage(
-                `Fichier hors workspace : "${filePath}". Autoriser l'accès ?`,
-                { modal: false },
-                '✅ Autoriser', '❌ Refuser'
-            );
-            if (r !== '✅ Autoriser') return null;
-        } else if (filePermission === 'ask-all') {
-            const location = inWorkspace ? 'dans le workspace' : 'hors workspace';
-            const r = await vscode.window.showInformationMessage(
-                `Accès au fichier (${location}) : "${filePath}". Autoriser ?`,
-                { modal: false },
-                '✅ Autoriser', '❌ Refuser'
-            );
-            if (r !== '✅ Autoriser') return null;
+        } else if (!inWorkspace) {
+            // Demande de permission UNIQUEMENT si hors workspace
+            if (filePermission === 'ask-all' || filePermission === 'ask-workspace') {
+                const r = await vscode.window.showInformationMessage(
+                    `Accès au fichier hors workspace : "${filePath}". Autoriser ?`,
+                    { modal: false },
+                    '✅ Autoriser', '❌ Refuser'
+                );
+                if (r !== '✅ Autoriser') return null;
+            }
         }
 
         const file = await this.readFile(filePath);

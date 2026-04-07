@@ -21,6 +21,7 @@ export interface PromptTemplate {
 }
 
 export class ChatSessionManager {
+    [x: string]: any;
     private _currentSession: ChatSession | null = null;
     private _context: vscode.ExtensionContext;
     private _templates: Map<string, PromptTemplate> = new Map();

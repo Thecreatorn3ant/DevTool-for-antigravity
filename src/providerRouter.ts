@@ -235,7 +235,8 @@ export class ProviderRouter {
         task: TaskType,
         preferredUrl?: string,
         requireVision: boolean = false,
-        preferredApiKey: string = ''
+        preferredApiKey: string = '',
+        requireLocal: boolean = false
     ): Promise<SelectedSlot> {
         this._stats.totalRequests++;
 
@@ -250,10 +251,16 @@ export class ProviderRouter {
             !h.suspended &&
             h.rateLimitedUntil <= now &&
             h.available &&
-            (!requireVision || h.capabilities.vision)
+            (!requireVision || h.capabilities.vision) &&
+            (!requireLocal || h.provider === 'local' || h.provider === 'lmstudio')
         );
 
         if (available.length === 0) {
+            if (requireLocal) {
+                const local = this._findLocalProvider();
+                if (local) return this._slotToSelected(local);
+                throw new Error('Aucun provider local disponible pour cette tâche.');
+            }
             return this._enqueueRequest(task, requireVision);
         }
 

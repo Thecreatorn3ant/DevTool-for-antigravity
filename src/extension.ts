@@ -6,12 +6,14 @@ import { InlineCompletionProvider } from './inlineCompletionProvider';
 import { CommitManager } from './commitManager';
 import { ModelConfigManager } from './modelConfigManager';
 import { ChatSessionManager } from './chatSessionManager';
+import { I18nManager, Language } from './i18n';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('[Antigravity] Extension activée');
 
     const modelConfigManager = new ModelConfigManager(context);
     const sessionManager = new ChatSessionManager(context);
+    const i18n = new I18nManager(context);
 
     const ollamaClient = new OllamaClient(modelConfigManager);
     ollamaClient.initSecretStore(context.secrets).then(migrated => {
@@ -27,7 +29,8 @@ export function activate(context: vscode.ExtensionContext) {
         ollamaClient,
         fileCtxManager,
         sessionManager,
-        commitManager
+        commitManager,
+        i18n
     );
     const inlineCompletionProvider = new InlineCompletionProvider(ollamaClient);
 
@@ -269,6 +272,24 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage(
                 `${related.length} fichier(s) ajouté(s) au contexte : ${related.map(f => f.name).join(', ')}`
             );
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('local-ai.setLanguage', async () => {
+            const result = await vscode.window.showQuickPick([
+                { label: 'Français', value: 'fr' },
+                { label: 'English', value: 'en' }
+            ], { placeHolder: 'Sélectionnez votre langue / Select your language' });
+
+            if (result) {
+                await i18n.setLanguage(result.value as Language);
+                vscode.window.showInformationMessage(
+                    result.value === 'fr'
+                        ? 'Langue changée en Français (Redémarrez le chat si nécessaire)'
+                        : 'Language changed to English (Restart chat if necessary)'
+                );
+            }
         })
     );
 

@@ -123,33 +123,19 @@ export class InlineCompletionProvider implements vscode.InlineCompletionItemProv
             ].join('\n');
 
             let completionText = '';
-            const slot = await this._ollamaClient.router.selectProvider('code');
+            const slot = await this._ollamaClient.router.selectProvider('code', undefined, false, '', true);
 
             if (token.isCancellationRequested || signal.aborted) return null;
 
-            const isLocal = slot.provider === 'local' || slot.provider === 'lmstudio';
-
-            if (isLocal) {
-                const { localStream } = await import('./localProvider');
-                completionText = await localStream({
-                    model: inlineModel,
-                    prompt,
-                    systemPrompt,
-                    signal,
-                    baseUrl: slot.url,
-                    apiKey: slot.apiKey || undefined,
-                }, () => { });
-            } else {
-                const { cloudStream } = await import('./cloudProvider');
-                completionText = await cloudStream({
-                    model: inlineModel,
-                    prompt,
-                    systemPrompt,
-                    baseUrl: slot.url,
-                    apiKey: slot.apiKey,
-                    signal,
-                }, () => { });
-            }
+            const { localStream } = await import('./localProvider');
+            completionText = await localStream({
+                model: inlineModel,
+                prompt,
+                systemPrompt,
+                signal,
+                baseUrl: slot.url,
+                apiKey: slot.apiKey || undefined,
+            }, () => { });
 
             this._ollamaClient.router.reportSuccess(slot.url, Date.now() - this._lastRequestTime, 0, slot.apiKey);
             this._lastRequestTime = Date.now();

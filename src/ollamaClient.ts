@@ -506,11 +506,12 @@ nouveau_code
     async generateStreamingResponse(
         prompt: string, context: string, onUpdate: (chunk: string) => void,
         modelOverride?: string, targetUrl?: string, images?: AttachedImage[],
-        taskType: TaskType = 'chat', preferredApiKey: string = '', signal?: AbortSignal
+        taskType: TaskType = 'chat', preferredApiKey: string = '', signal?: AbortSignal,
+        requireLocal: boolean = false
     ): Promise<string> {
         const model = modelOverride || this._getConfig().get<string>('defaultModel') || 'llama3';
         const fullPrompt = context ? `Contexte du projet:\n${context}\n\n---\nQuestion: ${prompt}` : prompt;
-        const slot = await this.router.selectProvider(taskType, targetUrl, !!(images?.length), preferredApiKey);
+        const slot = await this.router.selectProvider(taskType, targetUrl, !!(images?.length), preferredApiKey, requireLocal);
 
         const isLocalProvider = slot.provider === 'local' || slot.provider === 'lmstudio';
         if (isLocalProvider) {
@@ -576,10 +577,11 @@ nouveau_code
 
     async generateResponse(
         prompt: string, context: string = '', modelOverride?: string, targetUrl?: string,
-        images?: AttachedImage[], preferredApiKey: string = '', signal?: AbortSignal
+        images?: AttachedImage[], preferredApiKey: string = '', signal?: AbortSignal,
+        requireLocal: boolean = false
     ): Promise<string> {
         let full = '';
-        await this.generateStreamingResponse(prompt, context, c => { full += c; }, modelOverride, targetUrl, images, 'chat', preferredApiKey, signal);
+        await this.generateStreamingResponse(prompt, context, c => { full += c; }, modelOverride, targetUrl, images, 'chat', preferredApiKey, signal, requireLocal);
         return full;
     }
 
