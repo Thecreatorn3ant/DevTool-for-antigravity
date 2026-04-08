@@ -386,26 +386,33 @@ function updateSettingsUI(settings) {
     document.getElementById('multValue').textContent = `${(settings.contextMult || 1).toFixed(1)}x`;
 }
 
-/* Onboarding Navigation */
 let currentObStep = 1;
-window.setObStep = function(n) {
+window.setObStep = function (n) {
     const steps = document.querySelectorAll('.ob-step');
     steps.forEach(s => s.classList.remove('active'));
-    
+
     currentObStep = n;
     const nextStep = document.getElementById(`ob-step-${n}`);
     if (nextStep) {
         nextStep.classList.add('active');
-        // Scroll to top of card on step change
         document.getElementById('obCard').scrollTop = 0;
     }
 };
 
-window.obFinish = function() {
+window.setLangAndStep = function (l, step) {
+    if (window.setLang) {
+        window.setLang(l);
+    } else {
+        vscode.postMessage({ type: 'setLanguage', value: l });
+    }
+    window.setObStep(step);
+};
+
+window.obFinish = function () {
     vscode.postMessage({ type: 'finishOnboarding', language: window.LANG || 'en' });
 };
 
-window.saveGeminiKey = function() {
+window.saveGeminiKey = function () {
     const key = document.getElementById('obGeminiKey').value;
     if (key) {
         vscode.postMessage({ type: 'setupGeminiKey', key: key });

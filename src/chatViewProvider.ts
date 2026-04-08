@@ -331,25 +331,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'addRelatedFiles':
                     await this._handleAddRelatedFiles();
                     break;
-                case 'finishOnboarding':
-                    if (data.language) {
-                        await this._i18n.setLanguage(data.language);
-                    }
-                    await this._context.globalState.update('antigravity.onboardingComplete', true);
-                    // Reload webview to apply language
-                    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview, false);
-                    break;
-                case 'setupGeminiKey':
-                    if (data.key) {
-                        await this._ollamaClient.addApiKey({
-                            name: 'Google Gemini (Onboarding)',
-                            url: 'https://generativelanguage.googleapis.com/v1beta',
-                            key: data.key
-                        });
-                        vscode.window.showInformationMessage('âÅ“… Clé Gemini configurée avec succès !');
-                        await this._updateModelsList();
-                    }
-                    break;
                 case 'toggleThinkMode':
                     this._thinkMode = !this._thinkMode;
                     webviewView.webview.postMessage({ type: 'thinkModeChanged', active: this._thinkMode });
@@ -473,13 +454,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'setLanguage':
                     if (data.value) {
                         await this._i18n.setLanguage(data.value);
-                        // Refresh with new texts
                         webviewView.webview.postMessage({
                             type: 'languageChanged',
                             lang: data.value,
                             translations: this._i18n.getAll()
                         });
                     }
+                    break;
+                case 'setupGeminiKey':
+                    if (data.key) {
+                        await this._ollamaClient.addApiKey({
+                            name: 'Google Gemini (Onboarding)',
+                            url: 'https://generativelanguage.googleapis.com/v1beta',
+                            key: data.key
+                        });
+                        vscode.window.showInformationMessage('✅ Clé Gemini configurée.');
+                        await this._updateModelsList();
+                    }
+                    break;
+                case 'finishOnboarding':
+                    if (data.language) {
+                        await this._i18n.setLanguage(data.language);
+                    }
+                    await this._context.globalState.update('antigravity.onboardingComplete', true);
+                    // NOW we reload to clear the overlay
+                    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview, false);
                     break;
             }
         });
@@ -1774,6 +1773,7 @@ Tu peux effectuer jusqu'à 5 actions autonomes par message. Reste focalisé sur 
         <div id="obBg"></div>
         <canvas id="obCanvas"></canvas>
         <div id="obCard">
+            <button class="ob-close" onclick="obFinish()">✕</button>
             <div class="ob-hdr">
                 <h2 class="ob-title">Antigravity</h2>
                 <p class="ob-sub">Mission Briefing : Configurez votre copilote IA en 60 secondes.</p>
@@ -1785,8 +1785,8 @@ Tu peux effectuer jusqu'à 5 actions autonomes par message. Reste focalisé sur 
                         <div class="ob-section-title">🌐 Configuration</div>
                         <p>Choisissez votre langue de prédilection pour l'interface :</p>
                         <div class="lang-btns">
-                            <button onclick="setLang('fr'); setObStep(2)" class="ob-btn ${lang === 'fr' ? 'cyan' : ''}">🇫🇷 Français</button>
-                            <button onclick="setLang('en'); setObStep(2)" class="ob-btn ${lang === 'en' ? 'cyan' : ''}">🇺🇸 English</button>
+                            <button onclick="setLangAndStep('fr', 2)" class="ob-btn ${lang === 'fr' ? 'cyan' : ''}">🇫🇷 Français</button>
+                            <button onclick="setLangAndStep('en', 2)" class="ob-btn ${lang === 'en' ? 'cyan' : ''}">🇺🇸 English</button>
                         </div>
                     </div>
                 </div>

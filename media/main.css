@@ -170,7 +170,7 @@ body {
 .header-tab.active {
     background: var(--bg-card);
     color: var(--primary);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 /* User's custom buttons (btn-cloud) seen in fix_html.js */
@@ -603,12 +603,16 @@ input:checked+.slider:before {
     position: fixed;
     inset: 0;
     z-index: 2000;
-    background: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(12px);
+    background: rgba(0, 0, 0, 0.85);
+    /* Slightly darker */
+    backdrop-filter: blur(15px);
+    /* More blur */
     display: flex;
     align-items: center;
     justify-content: center;
     animation: fadeIn 0.4s ease;
+    padding: 20px;
+    /* Force some spacing around the card */
 }
 
 #obBg {
@@ -622,16 +626,40 @@ input:checked+.slider:before {
     border: 1px solid var(--border);
     border-radius: 28px;
     padding: 32px;
-    width: 90%;
-    max-width: 520px;
-    max-height: 85vh;
+    width: 100%;
+    max-width: 480px;
+    max-height: 90vh;
     overflow-y: auto;
     position: relative;
-    box-shadow: 0 30px 80px rgba(0,0,0,0.7);
+    box-shadow: 0 40px 100px rgba(0, 0, 0, 0.8);
     display: flex;
     flex-direction: column;
-    gap: 24px;
-    transition: height 0.3s ease;
+    gap: 20px;
+    transition: all 0.3s ease;
+    margin: auto;
+}
+
+.ob-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+}
+
+.ob-close:hover {
+    background: rgba(255, 82, 82, 0.1);
+    color: #ff5252;
+    border-color: rgba(255, 82, 82, 0.2);
 }
 
 .ob-hdr {
@@ -793,4 +821,4 @@ input:checked+.slider:before {
     font-size: 16px;
     padding: 16px;
     margin-top: 10px;
-}
+}
