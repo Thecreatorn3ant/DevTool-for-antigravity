@@ -1,4 +1,4 @@
-﻿import * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import { OllamaClient, ContextFile, ApiKeyStatus, estimateTokens, AttachedImage } from './ollamaClient';
@@ -1775,17 +1775,85 @@ Tu peux effectuer jusqu'à 5 actions autonomes par message. Reste focalisé sur 
         <canvas id="obCanvas"></canvas>
         <div id="obCard">
             <div class="ob-hdr">
-                <h2 class="ob-title">${t.onboarding_title}</h2>
-                <p class="ob-sub">${t.onboarding_subtitle}</p>
+                <h2 class="ob-title">Antigravity</h2>
+                <p class="ob-sub">Mission Briefing : Configurez votre copilote IA en 60 secondes.</p>
             </div>
             <div class="ob-body">
-                <div class="ob-step active">
-                    <p>${t.select_language}:</p>
-                    <div class="lang-btns">
-                        <button onclick="setLang('fr')" class="ob-btn ${lang === 'fr' ? 'cyan' : ''}">FR</button>
-                        <button onclick="setLang('en')" class="ob-btn ${lang === 'en' ? 'cyan' : ''}">EN</button>
+                <!-- STEP 1: Language -->
+                <div id="ob-step-1" class="ob-step active">
+                    <div class="ob-section">
+                        <div class="ob-section-title">🌐 Configuration</div>
+                        <p>Choisissez votre langue de prédilection pour l'interface :</p>
+                        <div class="lang-btns">
+                            <button onclick="setLang('fr'); setObStep(2)" class="ob-btn ${lang === 'fr' ? 'cyan' : ''}">🇫🇷 Français</button>
+                            <button onclick="setLang('en'); setObStep(2)" class="ob-btn ${lang === 'en' ? 'cyan' : ''}">🇺🇸 English</button>
+                        </div>
                     </div>
-                    <button class="ob-btn launch" onclick="obFinish()">${t.finish} →</button>
+                </div>
+
+                <!-- STEP 2: Cloud AI (Gemini) -->
+                <div id="ob-step-2" class="ob-step">
+                    <div class="ob-section">
+                        <div class="ob-section-title">✨ Google Gemini (Recommandé)</div>
+                        <p>Le tier gratuit le plus généreux : <b>1M de tokens</b> de contexte, gratuit, sans carte bancaire.</p>
+                        
+                        <div class="ob-input-group">
+                            <input type="password" id="obGeminiKey" class="ob-input" placeholder="Collez votre clé API Gemini ici...">
+                            <p style="font-size: 11px; margin-top: 8px; color: var(--text-muted)">Obtenez une clé gratuite sur <a href="https://aistudio.google.com/" target="_blank">AI Studio</a></p>
+                        </div>
+
+                        <div class="ob-nav-footer">
+                            <button onclick="setObStep(1)" class="ob-btn secondary">Retour</button>
+                            <button onclick="saveGeminiKey()" class="ob-btn primary">Enregistrer & Continuer</button>
+                            <button onclick="setObStep(3)" class="ob-btn secondary">Plus tard</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 3: Quick Reference -->
+                <div id="ob-step-3" class="ob-step">
+                    <div class="ob-section">
+                        <div class="ob-section-title">🚀 Guide de pilotage</div>
+                        
+                        <div class="ob-feature-item">
+                            <div class="ob-feature-icon">📎</div>
+                            <div class="ob-feature-text">
+                                <div class="ob-feature-label">Contexte Fichiers</div>
+                                <div class="ob-feature-desc">Ajoutez des fichiers au chat pour une analyse précise.</div>
+                            </div>
+                        </div>
+
+                        <div class="ob-feature-item">
+                            <div class="ob-feature-icon">🧠</div>
+                            <div class="ob-feature-text">
+                                <div class="ob-feature-label">Mode Réflexion</div>
+                                <div class="ob-feature-desc">L'IA planifie avant de coder pour de meilleurs résultats.</div>
+                            </div>
+                        </div>
+
+                        <div class="ob-feature-item">
+                            <div class="ob-feature-icon">🤖</div>
+                            <div class="ob-feature-text">
+                                <div class="ob-feature-label">Agent Autonome</div>
+                                <div class="ob-feature-desc">Laissez l'IA explorer et modifier votre projet seule.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="ob-nav-footer">
+                        <button onclick="setObStep(2)" class="ob-btn secondary">Retour</button>
+                        <button onclick="setObStep(4)" class="ob-btn primary">Compris !</button>
+                    </div>
+                </div>
+
+                <!-- STEP 4: Launch -->
+                <div id="ob-step-4" class="ob-step">
+                    <div class="ob-section" style="text-align: center; padding: 40px 20px;">
+                        <div style="font-size: 50px; margin-bottom: 20px;">🛸</div>
+                        <h3 style="color: var(--primary); margin-bottom: 10px;">Paré au décollage !</h3>
+                        <p>Sélectionnez un modèle en haut à droite pour commencer.</p>
+                    </div>
+                    <button class="ob-btn launch" onclick="obFinish()">Démarrer Antigravity 🚀</button>
                 </div>
             </div>
         </div>

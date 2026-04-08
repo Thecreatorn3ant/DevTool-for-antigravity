@@ -159,16 +159,71 @@ function showNotification(message, type = 'info') {
 
 function renderModelOptions(models, selectedVal) {
     _allModels = models;
+
     modelSelect.innerHTML = models.map(x => {
         const s = x.value === selectedVal ? ' selected' : '';
         return `<option value="${x.value}" data-name="${x.name}" data-provider="${x.provider || ''}"${s}>${x.name}</option>`;
     }).join('');
+
+    renderDropdown(models, selectedVal);
 
     const found = models.find(x => x.value === selectedVal) || models[0];
     if (found) {
         modelSearch.value = found.name;
         updateSelectColor();
     }
+}
+
+function renderDropdown(models, selectedVal) {
+    const PROVIDER_ICONS = {
+        local: '⚡', lmstudio: '💻', gemini: '✨', openai: '✦', openrouter: '◎',
+        together: '∞', mistral: '†', groq: '›', anthropic: '✦',
+        deepseek: '∞', cohere: '✦', perplexity: '◎', xai: '✦',
+        fireworks: '⚡', 'ollama-cloud': '☁️'
+    };
+
+    modelDropdown.innerHTML = models.map(m => {
+        const isSelected = m.value === selectedVal;
+        const icon = PROVIDER_ICONS[m.provider] || '☁️';
+        return `
+            <div class="model-item ${isSelected ? 'selected' : ''}" data-value="${m.value}" data-name="${m.name}">
+                <span class="model-item-provider">${icon}</span>
+                <span class="model-item-name">${m.name}</span>
+            </div>
+        `;
+    }).join('');
+
+    modelDropdown.querySelectorAll('.model-item').forEach(item => {
+        item.onclick = (e) => {
+            e.stopPropagation();
+            selectModel(item.getAttribute('data-value'), item.getAttribute('data-name'));
+        };
+    });
+}
+
+function toggleDropdown(show) {
+    _comboOpen = show !== undefined ? show : !_comboOpen;
+    if (_comboOpen) {
+        modelDropdown.classList.add('show');
+        modelSearch.focus();
+    } else {
+        modelDropdown.classList.remove('show');
+    }
+}
+
+function selectModel(val, name) {
+    modelSelect.value = val;
+    modelSearch.value = name;
+    toggleDropdown(false);
+    updateSelectColor();
+    vscode.postMessage({ type: 'saveModel', model: val });
+}
+
+function filterModels() {
+    const q = modelSearch.value.toLowerCase();
+    const filtered = _allModels.filter(m => m.name.toLowerCase().includes(q));
+    renderDropdown(filtered, modelSelect.value);
+    if (!modelDropdown.classList.contains('show')) toggleDropdown(true);
 }
 
 function updateSelectColor() {
@@ -205,10 +260,43 @@ document.getElementById('btnNewChat').onclick = () => {
 };
 
 document.getElementById('btnAddFile').onclick = () => vscode.postMessage({ type: 'requestFileAccess', target: 'picker' });
+
 document.getElementById('btnAgent').onclick = () => {
     const goal = promptEl.value.trim() || prompt('Agent goal:');
     if (goal) vscode.postMessage({ type: 'runAgent', goal });
 };
+
+modelComboBox.onclick = (e) => {
+    e.stopPropagation();
+    toggleDropdown();
+};
+
+modelSearch.oninput = filterModels;
+modelSearch.onclick = (e) => e.stopPropagation();
+
+document.addEventListener('click', () => toggleDropdown(false));
+
+document.getElementById('btnSaveSettings').onclick = saveSettings;
+
+document.getElementById('settingContextMult').oninput = (e) => {
+    document.getElementById('multValue').textContent = `${parseFloat(e.target.value).toFixed(1)}x`;
+};
+
+function saveSettings() {
+    const contextMult = parseFloat(document.getElementById('settingContextMult').value);
+    const lang = document.getElementById('selectLang').value;
+
+    vscode.postMessage({
+        type: 'saveSettings',
+        settings: {
+            contextMult: contextMult
+        }
+    });
+
+    if (lang !== window.LANG) {
+        vscode.postMessage({ type: 'setLanguage', value: lang });
+    }
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
@@ -297,3 +385,33 @@ function updateSettingsUI(settings) {
     document.getElementById('settingContextMult').value = settings.contextMult || 1;
     document.getElementById('multValue').textContent = `${(settings.contextMult || 1).toFixed(1)}x`;
 }
+
+/* Onboarding Navigation */
+let currentObStep = 1;
+window.setObStep = function(n) {
+    const steps = document.querySelectorAll('.ob-step');
+    steps.forEach(s => s.classList.remove('active'));
+    
+    currentObStep = n;
+    const nextStep = document.getElementById(`ob-step-${n}`);
+    if (nextStep) {
+        nextStep.classList.add('active');
+        // Scroll to top of card on step change
+        document.getElementById('obCard').scrollTop = 0;
+    }
+};
+
+window.obFinish = function() {
+    vscode.postMessage({ type: 'finishOnboarding', language: window.LANG || 'en' });
+};
+
+window.saveGeminiKey = function() {
+    const key = document.getElementById('obGeminiKey').value;
+    if (key) {
+        vscode.postMessage({ type: 'setupGeminiKey', key: key });
+        // Auto move to next step after a tiny delay
+        setTimeout(() => window.setObStep(4), 1000);
+    } else {
+        window.setObStep(4); // Skip
+    }
+};
